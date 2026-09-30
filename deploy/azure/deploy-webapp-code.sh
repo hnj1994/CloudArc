@@ -15,7 +15,6 @@ RG="${CLOUDARC_RG:-rg-cloudarc}"
 LOCATION="${CLOUDARC_LOCATION:-centralindia}"
 SKU="${CLOUDARC_PLAN_SKU:-B2}"
 PLAN="${APP}-plan"
-AUTH_MODE="${CLOUDARC_AUTH_MODE:-dev}"
 
 if [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZURE_CLIENT_SECRET:-}" ]; then
   az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" --output none
@@ -36,7 +35,6 @@ SETTINGS=(
   WEBSITES_CONTAINER_START_TIME_LIMIT=600
   CLOUDARC_DATA_DIR=/home/cloudarc
   MPLCONFIGDIR=/tmp/matplotlib
-  CLOUDARC_AUTH_MODE="$AUTH_MODE"
   CLOUDARC_SCHEDULER_ENABLED=true
   CLOUDARC_BASE_CURRENCY=INR
 )
@@ -44,6 +42,10 @@ if [ -z "$EXISTING_KEY" ]; then
   SETTINGS+=("CLOUDARC_MASTER_KEY=$(head -c 32 /dev/urandom | base64)")
   echo "Generated CLOUDARC_MASTER_KEY (App Service setting). Back it up: stored credentials cannot be decrypted without it."
 fi
+# Sign-in mode: an explicit CLOUDARC_AUTH_MODE wins; otherwise keep the app's current mode (so a redeploy
+# never turns SSO off), defaulting to "dev" (API tokens) on first deploy.
+CURRENT_MODE=$(az webapp config appsettings list -n "$APP" -g "$RG" --query "[?name=='CLOUDARC_AUTH_MODE'].value | [0]" -o tsv)
+SETTINGS+=(CLOUDARC_AUTH_MODE="${CLOUDARC_AUTH_MODE:-${CURRENT_MODE:-dev}}")
 [ -n "${ADMIN_EMAIL:-}" ] && SETTINGS+=(CLOUDARC_BOOTSTRAP_ADMIN_EMAIL="$ADMIN_EMAIL")
 az webapp config appsettings set -n "$APP" -g "$RG" --settings "${SETTINGS[@]}" --output none
 
