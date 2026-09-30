@@ -29,7 +29,11 @@ async function api(path, { method = "GET", body, form, raw } = {}) {
   let payload;
   if (form) payload = form;
   else if (body !== undefined) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(body); }
-  const r = await fetch(path, { method, headers, body: payload });
+  let r = await fetch(path, { method, headers, body: payload });
+  if (r.status === 401 && S.msal && (await refreshSsoToken())) {
+    headers.Authorization = `Bearer ${S.token}`;
+    r = await fetch(path, { method, headers, body: payload });
+  }
   if (r.status === 401) { logout(); throw new Error("Session expired"); }
   if (!r.ok) {
     let detail = r.statusText;
@@ -61,7 +65,10 @@ async function download(path, fallbackName) {
 async function boot() {
   applyTheme(localStorageGet("cloudarc.theme"));
   try { S.config = await (await fetch("/api/config")).json(); } catch (_) { S.config = {}; }
-  if (S.config.auth_mode === "entra" && S.config.entra_client_id) $("#sso-btn").classList.remove("hidden");
+  if (S.config.auth_mode === "entra" && S.config.entra_client_id) {
+    $("#sso-btn").classList.remove("hidden");
+    try { await initMsal(); if (await refreshSsoToken()) { await start(); return; } } catch (_) { /* fall through to login */ }
+  }
   S.token = sessionStorageGet("cloudarc.token");
   if (S.token) { try { await start(); return; } catch (_) { S.token = null; } }
   showLogin();
@@ -72,7 +79,11 @@ function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch 
 function sessionStorageSet(k, v) { try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch (_) { /* blocked */ } }
 
 function showLogin() { $("#login").classList.remove("hidden"); $("#shell").classList.add("hidden"); }
-function logout() { sessionStorageSet("cloudarc.token", null); S.token = null; location.hash = ""; showLogin(); }
+function logout() {
+  sessionStorageSet("cloudarc.token", null); S.token = null; location.hash = "";
+  if (S.msal) { const acct = S.msal.getActiveAccount(); S.msal.clearCache?.({ account: acct }); }
+  showLogin();
+}
 
 $("#token-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -81,20 +92,46 @@ $("#token-form").addEventListener("submit", async (e) => {
   catch (err) { $("#login-error").textContent = err.message || "Sign-in failed"; S.token = null; }
 });
 
-$("#sso-btn").addEventListener("click", async () => {
+/* Entra ID SSO: MSAL (bundled, no CDN) with a popup that lands on a blank page. Access tokens live in
+   MSAL's sessionStorage cache and are refreshed silently, so a session survives the 1-hour token lifetime. */
+const SSO_SCOPES = () => [`api://${S.config.entra_client_id}/access_as_user`];
+async function initMsal() {
+  if (S.msal) return S.msal;
+  if (!window.msal) await loadScript("/static/vendor/msal-browser-3.30.0.min.js");
+  const app = new window.msal.PublicClientApplication({
+    auth: { clientId: S.config.entra_client_id, authority: `https://login.microsoftonline.com/${S.config.entra_tenant_id}`,
+            redirectUri: `${location.origin}/static/blank.html` },
+    cache: { cacheLocation: "sessionStorage" },
+  });
+  await app.initialize();
+  const acct = app.getAllAccounts()[0];
+  if (acct) app.setActiveAccount(acct);
+  S.msal = app;
+  return app;
+}
+async function refreshSsoToken() {
+  const acct = S.msal?.getActiveAccount();
+  if (!acct) return false;
   try {
-    await loadScript("https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.10.0/lib/msal-browser.min.js");
-    const msal = new window.msal.PublicClientApplication({
-      auth: { clientId: S.config.entra_client_id, authority: `https://login.microsoftonline.com/${S.config.entra_tenant_id}`, redirectUri: location.origin },
-      cache: { cacheLocation: "sessionStorage" },
-    });
-    await msal.initialize();
-    const res = await msal.loginPopup({ scopes: [`api://${S.config.entra_client_id}/access_as_user`] });
+    const res = await S.msal.acquireTokenSilent({ scopes: SSO_SCOPES(), account: acct });
+    S.token = res.accessToken;
+    return true;
+  } catch (_) { return false; }
+}
+$("#sso-btn").addEventListener("click", async () => {
+  $("#login-error").textContent = "";
+  try {
+    const app = await initMsal();
+    const res = await app.loginPopup({ scopes: SSO_SCOPES(), prompt: "select_account" });
+    app.setActiveAccount(res.account);
     S.token = res.accessToken;
     await start();
     await api("/api/session", { method: "POST" });
-    sessionStorageSet("cloudarc.token", S.token);
-  } catch (err) { $("#login-error").textContent = err.message || "Microsoft sign-in failed"; }
+  } catch (err) {
+    $("#login-error").textContent = /not provisioned/.test(err.message || "")
+      ? "Signed in with Microsoft, but this account has no CloudArc access yet. Ask a platform admin to add you."
+      : (err.message || "Microsoft sign-in failed");
+  }
 });
 function loadScript(src) { return new Promise((ok, fail) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = fail; document.head.appendChild(s); }); }
 

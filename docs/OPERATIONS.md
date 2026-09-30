@@ -28,6 +28,15 @@ The script is idempotent; re-run it to ship a new version. It creates a Containe
 
 ### Platform sign-in (Entra ID SSO)
 
+On Azure App Service, one script does all of it. Run it as a user who can create app registrations, for example in Azure Cloud Shell:
+
+```bash
+CLOUDARC_APP=cloudarc-console ./deploy/azure/setup-entra-sso.sh
+```
+
+The script creates the app registration, redirect URIs and scope, pre-authorizes the console so users see no consent prompt, and switches the web app to `CLOUDARC_AUTH_MODE=entra`. The manual steps below are the equivalent for other hosts.
+
+
 1. In Entra ID, register an app, e.g. **CloudArc Console**, as a single-tenant *SPA*. Set the redirect URI to `https://<CLOUDARC_HOSTNAME>`.
 2. Under **Expose an API**, set the Application ID URI to `api://<client-id>` and add the scope `access_as_user`.
 3. Enforce MFA through Conditional Access for this app.

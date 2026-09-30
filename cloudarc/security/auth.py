@@ -109,7 +109,9 @@ def principal_from_entra_jwt(db: Database, token: str) -> Principal:
         )
     except jwt.PyJWTError as exc:
         raise AuthError(f"invalid Entra token: {type(exc).__name__}") from exc
-    email = (claims.get("preferred_username") or claims.get("email") or claims.get("upn") or "").lower()
+    # v2 tokens carry preferred_username; v1 tokens carry upn (members) or unique_name (guests, e.g. live.com#user@x).
+    raw = claims.get("preferred_username") or claims.get("email") or claims.get("upn") or claims.get("unique_name") or ""
+    email = raw.split("#")[-1].lower()
     uid = db.scalar("SELECT id FROM users WHERE lower(email) = ?", [email])
     if not uid:
         raise AuthError("user is not provisioned in CloudArc; ask a platform admin to add you")

@@ -32,7 +32,7 @@ cloudarc = "cloudarc.cli:main"
 include = ["cloudarc*"]
 
 [tool.setuptools.package-data]
-cloudarc = ["web/static/*"]
+cloudarc = ["web/static/*", "web/static/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
