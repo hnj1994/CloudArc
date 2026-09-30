@@ -177,3 +177,29 @@ def test_api_upload_reports_and_exports(client, tmp_path):
         assert x.status_code == 200 and x.content[:2] == b"PK", name
     rec = client.post("/api/tenants/demo-a/reconcile", json={"month": "2026-08", "provider_total": 11421.49}, headers=h).json()
     assert rec["within_tolerance"] is True
+
+
+def test_sync_survives_unregistered_insights_and_advisor(db):
+    """Pay-as-you-go subscriptions often lack Microsoft.Insights / Microsoft.Advisor registration."""
+
+    class Unregistered(FakeAzure):
+        def __call__(self, request):
+            url = str(request.url)
+            if "Microsoft.Insights/metrics" in url or "Microsoft.Advisor" in url:
+                self.requests.append(f"{request.method} {url}")
+                return httpx.Response(409, json={"error": {"code": "MissingSubscriptionRegistration",
+                                                           "message": "The subscription is not registered to use namespace"}})
+            return super().__call__(request)
+
+    tenants.create_tenant(db, "Client", tenant_id="t1")
+    cred = tenants.store_credential(db, "t1", "azure", "dir", "app", "good-secret-value")
+    aid = tenants.upsert_account(db, "t1", "azure", SUB, "Prod", cred)
+    fake = Unregistered()
+    res = sync.sync_account(db, "t1", aid, lambda c: make_client(fake, c["directory_id"], c["client_id"], c["secret"]),
+                            today=date(2026, 9, 29))
+    assert res["cost_rows"] > 0 and res["metric_points"] == 0
+    assert len(res["warnings"]) == 2 and all("MissingSubscriptionRegistration" in w for w in res["warnings"])
+    acct = db.one("SELECT last_sync_status, last_error FROM cloud_accounts WHERE id = ?", [aid])
+    assert acct["last_sync_status"] == "partial" and "register the resource provider" in acct["last_error"]
+    # only one metrics call was attempted: the cause is subscription-wide
+    assert sum("Microsoft.Insights/metrics" in r for r in fake.requests) == 1

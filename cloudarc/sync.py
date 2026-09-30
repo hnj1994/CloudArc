@@ -20,7 +20,7 @@ from . import alerts, audit, budgets
 from .analytics.costs import anomalies_by
 from .analytics.filters import Scope
 from .config import get_settings
-from .connectors.azure import DISK_METRICS, SQL_METRICS, VM_METRICS, AzureClient
+from .connectors.azure import DISK_METRICS, SQL_METRICS, VM_METRICS, AzureClient, AzureError
 from .db import Database, new_id
 from .ingest.loader import ingest_files
 from .inventory import upsert_metrics, upsert_resources
@@ -85,6 +85,9 @@ def sync_account(db: Database, tenant_id: str, account_id: str, factory: ClientF
     inv = client.inventory(sub)
     result["inventory"] = upsert_resources(db, tenant_id, account_id, inv)
 
+    # Metrics and Advisor enrich recommendations but are not required for cost data: a subscription without
+    # the Microsoft.Insights / Microsoft.Advisor providers registered still syncs, with a warning.
+    warnings: list[str] = []
     metrics, n = [], 0
     for r in inv:
         rtype = (r.get("type") or "").lower()
@@ -92,7 +95,11 @@ def sync_account(db: Database, tenant_id: str, account_id: str, factory: ClientF
                   if rtype == "microsoft.sql/servers/databases" else DISK_METRICS if rtype == "microsoft.compute/disks" else None)
         if wanted and n < MAX_METRIC_RESOURCES:
             n += 1
-            metrics += client.daily_metrics(r["id"], wanted)
+            try:
+                metrics += client.daily_metrics(r["id"], wanted)
+            except AzureError as exc:
+                warnings.append(f"utilization metrics unavailable: {_short(exc)}")
+                break  # same cause for every resource (e.g. Microsoft.Insights not registered)
     result["metric_points"] = upsert_metrics(db, tenant_id, metrics)
 
     for r in inv:
@@ -110,14 +117,26 @@ def sync_account(db: Database, tenant_id: str, account_id: str, factory: ClientF
                 except Exception as exc:  # noqa: BLE001 - prices are an enhancement, not a sync failure
                     log.warning("retail price lookup failed for %s: %s", size, type(exc).__name__)
 
-    result["advisor"] = engine.merge_advisor(db, tenant_id, account_id, client.advisor_cost(sub))
+    try:
+        result["advisor"] = engine.merge_advisor(db, tenant_id, account_id, client.advisor_cost(sub))
+    except AzureError as exc:
+        warnings.append(f"Azure Advisor unavailable: {_short(exc)}")
     duration = time.time() - t0
     db.execute(
-        "UPDATE cloud_accounts SET last_sync_at = now(), last_sync_status = 'succeeded', last_sync_duration_s = ?, last_error = NULL WHERE id = ?",
-        [duration, account_id],
+        "UPDATE cloud_accounts SET last_sync_at = now(), last_sync_status = ?, last_sync_duration_s = ?, last_error = ? WHERE id = ?",
+        ["partial" if warnings else "succeeded", duration, "; ".join(warnings) or None, account_id],
     )
     result["duration_s"] = round(duration, 1)
+    result["warnings"] = warnings
     return result
+
+
+def _short(exc: Exception) -> str:
+    text = str(exc)
+    for code in ("MissingSubscriptionRegistration", "AuthorizationFailed", "SubscriptionNotRegistered"):
+        if code in text:
+            return f"{code} (register the resource provider or grant Reader, then re-sync)"
+    return text[:200]
 
 
 def post_sync(db: Database, tenant_id: str, as_of: date | None = None, notify: bool = True) -> dict:
