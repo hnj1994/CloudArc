@@ -11,6 +11,21 @@ ADMIN_EMAIL=admin@yourcompany.com ./deploy/install.sh
 - Set `CLOUDARC_HOSTNAME`. For internal names, Caddy issues certificates from its own CA; for public names, it uses Let's Encrypt.
 - Upgrade with `git pull && sudo docker compose up -d --build`. The schema is created and migrated on start.
 
+### Alternative: Azure App Service
+
+```bash
+az login
+CLOUDARC_APP=cloudarc-isource ADMIN_EMAIL=you@isource.example ./deploy/azure/deploy-webapp.sh
+```
+
+The script is idempotent; re-run it to ship a new version. It creates a Container Registry (the image is built in Azure with `az acr build`), a Key Vault holding `CLOUDARC_MASTER_KEY` (generated once, referenced from app settings), and a Linux App Service plan and Web App. The web app pulls from the registry with its managed identity, is HTTPS-only with TLS 1.2+, has Always On enabled and is health-checked on `/api/health`. Defaults are resource group `rg-cloudarc`, region `centralindia` and plan `B2`; override them with `CLOUDARC_RG`, `CLOUDARC_LOCATION` and `CLOUDARC_PLAN_SKU`.
+
+- **One instance only.** DuckDB allows a single writer and the scheduler runs in-process, so the plan is pinned to one worker. Scale up, not out.
+- **Data** lives on App Service persistent storage (`/home/cloudarc`). Back it up with `cloudarc backup` or App Service backups.
+- **First admin.** With `ADMIN_EMAIL` set on a fresh database, the admin API token is written to `/home/cloudarc/bootstrap-admin-token.txt`. It is never written to the logs. The script prints the `az rest` commands to read the file once and then delete it.
+- **Continuous deployment.** `.github/workflows/deploy-azure.yml` runs the tests, builds the image in the registry and rolls it out on every push to `main`. It needs an OIDC federated credential; setup is described in the workflow header.
+- **Not yet validated on a live subscription:** the script has only been syntax-checked. In particular, confirm on the first run that the non-root container user can write to `/home`.
+
 ### Platform sign-in (Entra ID SSO)
 
 1. In Entra ID, register an app, e.g. **CloudArc Console**, as a single-tenant *SPA*. Set the redirect URI to `https://<CLOUDARC_HOSTNAME>`.

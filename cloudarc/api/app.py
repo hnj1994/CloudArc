@@ -34,6 +34,11 @@ def create_app(db: Database | None = None, start_scheduler: bool | None = None) 
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        import os
+
+        from ..security.bootstrap import bootstrap_admin
+
+        bootstrap_admin(get_db(), os.environ.get("CLOUDARC_BOOTSTRAP_ADMIN_EMAIL"), get_settings().data_dir)
         scheduler = None
         if run_scheduler:
             from ..sync import Scheduler

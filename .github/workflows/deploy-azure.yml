@@ -1,0 +1,46 @@
+name: Deploy to Azure App Service
+# Continuous deployment after the one-time `deploy/azure/deploy-webapp.sh` has created the resources.
+# Setup: an Entra app registration with a federated credential for this repository (OIDC, no secret),
+# granted AcrPush on the registry and Website Contributor on the web app. Then set:
+#   secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   vars:    AZURE_WEBAPP_NAME, AZURE_RESOURCE_GROUP, AZURE_ACR_NAME
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency: deploy-azure
+
+jobs:
+  deploy:
+    if: vars.AZURE_WEBAPP_NAME != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Tests must pass before deploying
+        run: pip install -r requirements.lock.txt && pip install -e ".[dev]" && python -m pytest -q
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Build image in ACR
+        run: az acr build -r "${{ vars.AZURE_ACR_NAME }}" -t "cloudarc:${GITHUB_SHA::7}" -t cloudarc:latest .
+      - name: Roll out
+        run: |
+          az webapp config container set -n "${{ vars.AZURE_WEBAPP_NAME }}" -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --container-image-name "${{ vars.AZURE_ACR_NAME }}.azurecr.io/cloudarc:${GITHUB_SHA::7}" \
+            --container-registry-url "https://${{ vars.AZURE_ACR_NAME }}.azurecr.io"
+          az webapp restart -n "${{ vars.AZURE_WEBAPP_NAME }}" -g "${{ vars.AZURE_RESOURCE_GROUP }}"
+      - name: Health check
+        run: |
+          host=$(az webapp show -n "${{ vars.AZURE_WEBAPP_NAME }}" -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query defaultHostName -o tsv)
+          for i in $(seq 1 40); do curl -fsS "https://$host/api/health" && exit 0; sleep 15; done
+          echo "health check failed"; exit 1

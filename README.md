@@ -48,7 +48,9 @@ All names, IDs and figures in the demo are synthetic.
 ADMIN_EMAIL=you@yourcompany.com ./deploy/install.sh
 ```
 
-This installs Docker if it is missing and creates `.env` with a fresh AES-256 master key. It then starts CloudArc behind Caddy (TLS 1.2+) and prints the first admin's API token. Set `CLOUDARC_AUTH_MODE=entra` and the `CLOUDARC_ENTRA_*` values to enable SSO. See [docs/OPERATIONS.md](docs/OPERATIONS.md) for onboarding, backups, restores and monitoring.
+This installs Docker if it is missing and creates `.env` with a fresh AES-256 master key. It then starts CloudArc behind Caddy (TLS 1.2+) and prints the first admin's API token. Set `CLOUDARC_AUTH_MODE=entra` and the `CLOUDARC_ENTRA_*` values to enable SSO. To run on **Azure App Service** instead: `CLOUDARC_APP=<unique-name> ADMIN_EMAIL=you@yourcompany.com ./deploy/azure/deploy-webapp.sh`.
+
+See [docs/OPERATIONS.md](docs/OPERATIONS.md) for onboarding, backups, restores and monitoring.
 
 ## Common tasks
 

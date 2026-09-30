@@ -112,3 +112,17 @@ def test_audit_log_records_actions(client):
     client.post("/api/tenants/demo-a/budgets", json={"name": "Audited", "amount": 20000}, headers=h)
     actions = [r["action"] for r in client.get("/api/audit", headers=client.hdr("admin")).json()]
     assert "login" in actions and "budget.create" in actions
+
+
+def test_bootstrap_admin_writes_token_file_once(db, tmp_path):
+    import os
+    import stat
+
+    from cloudarc.security.auth import principal_from_api_token
+    from cloudarc.security.bootstrap import bootstrap_admin
+
+    path = bootstrap_admin(db, "owner@example.com", tmp_path)
+    assert path and stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    email, token = path.read_text().split()
+    assert email == "owner@example.com" and principal_from_api_token(db, token).is_platform_admin
+    assert bootstrap_admin(db, "other@example.com", tmp_path) is None  # never runs once users exist
