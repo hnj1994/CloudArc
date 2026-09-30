@@ -205,7 +205,7 @@ class AzureClient:
         if r.status_code == 400:  # metric not supported on this SKU (e.g. credits on non-B VMs)
             return []
         if r.status_code >= 400:
-            raise AzureError(f"metrics failed ({r.status_code}) for {resource_id}")
+            raise AzureError(f"metrics failed ({r.status_code}) for {resource_id}: {r.text[:300]}")
         out = []
         for m in r.json().get("value", []):
             name = m["name"]["value"]

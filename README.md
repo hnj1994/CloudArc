@@ -70,3 +70,4 @@ The web console covers the same tasks, plus the onboarding wizard. REST API docs
 - [Architecture](docs/ARCHITECTURE.md): components, data model, the multi-cloud adapter design and scaling path
 - [Requirements traceability](docs/REQUIREMENTS_TRACEABILITY.md): every BRD/FRD requirement mapped to code and tests
 - [Operations](docs/OPERATIONS.md): deployment, Azure onboarding permissions, backup/restore, monitoring
+- [Connecting clouds](docs/CONNECTING_CLOUDS.md): Azure API connection, AWS CUR and GCP billing export uploads
