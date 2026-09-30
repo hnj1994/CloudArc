@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+*.duckdb
+*.duckdb.wal
+.env
+reports_out/
+backups/
+cloudarc.egg-info/
+build/

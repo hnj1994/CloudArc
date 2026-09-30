@@ -1,0 +1,33 @@
+# Single-command deployment on Ubuntu: `docker compose up -d` (see deploy/install.sh).
+services:
+  cloudarc:
+    build: .
+    image: cloudarc:latest
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - cloudarc-data:/data
+    expose:
+      - "8080"
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  # TLS termination (TLS 1.2+). Caddy obtains certificates automatically for a public
+  # CLOUDARC_HOSTNAME, or uses its internal CA for private names (e.g. cloudarc.internal).
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [cloudarc]
+    ports:
+      - "443:443"
+      - "80:80"
+    environment:
+      CLOUDARC_HOSTNAME: ${CLOUDARC_HOSTNAME:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+volumes:
+  cloudarc-data:
+  caddy-data:

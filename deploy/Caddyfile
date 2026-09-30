@@ -1,0 +1,11 @@
+{$CLOUDARC_HOSTNAME} {
+	tls {
+		protocols tls1.2 tls1.3
+	}
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Content-Security-Policy "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://login.microsoftonline.com; frame-src https://login.microsoftonline.com; frame-ancestors 'none'"
+	}
+	reverse_proxy cloudarc:8080
+}

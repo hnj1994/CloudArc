@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CloudArc Console</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M6 22a8 8 0 0 1 16-6 6 6 0 1 1 2 12H8a4 4 0 0 1-2-6z' fill='%232a78d6'/></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <div class="login-card">
+      <h1><span class="logo">☁</span> CloudArc</h1>
+      <p class="muted">Cloud cost management &amp; governance</p>
+      <button id="sso-btn" class="btn primary hidden">Sign in with Microsoft</button>
+      <form id="token-form">
+        <label for="token">API token</label>
+        <input id="token" type="password" autocomplete="off" placeholder="ca_…" required>
+        <button class="btn primary" type="submit">Sign in</button>
+      </form>
+      <p id="login-error" class="error"></p>
+    </div>
+  </div>
+
+  <div id="shell" class="shell hidden">
+    <aside class="sidebar">
+      <div class="brand"><span class="logo">☁</span> CloudArc</div>
+      <label class="tenant-label" for="tenant-select">Client</label>
+      <select id="tenant-select"></select>
+      <nav id="nav">
+        <a href="#dashboard">Dashboard</a>
+        <a href="#explorer">Cost explorer</a>
+        <a href="#allocation">Allocation &amp; tags</a>
+        <a href="#budgets">Budgets</a>
+        <a href="#alerts">Alerts</a>
+        <a href="#recommendations">Recommendations</a>
+        <a href="#inventory">Inventory</a>
+        <a href="#reports">Reports</a>
+        <a href="#accounts">Accounts &amp; data</a>
+        <a href="#admin" data-admin>Administration</a>
+      </nav>
+      <div class="sidebar-foot">
+        <div id="whoami" class="muted small"></div>
+        <button id="theme-btn" class="btn ghost small" type="button">Theme</button>
+        <button id="logout-btn" class="btn ghost small" type="button">Sign out</button>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <button id="menu-btn" class="btn ghost small menu-btn" type="button" aria-label="Menu">☰</button>
+        <h2 id="page-title">Dashboard</h2>
+        <span id="as-of" class="pill"></span>
+      </header>
+      <section id="view" aria-live="polite"></section>
+    </main>
+  </div>
+  <div id="toast" class="toast hidden" role="status"></div>
+</body>
+</html>
