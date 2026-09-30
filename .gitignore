@@ -10,3 +10,4 @@ reports_out/
 backups/
 cloudarc.egg-info/
 build/
+.claude/settings.local.json
