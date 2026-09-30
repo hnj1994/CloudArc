@@ -53,7 +53,7 @@ az rest --method PATCH --uri "$GRAPH/applications/$OBJ" --headers "Content-Type=
 }"
 
 # 3) enterprise application (service principal) so users in the tenant can sign in
-az ad sp show --id "$CLIENT_ID" --output none 2>/dev/null || az ad sp create --id "$CLIENT_ID" --output none
+[ -n "$(az ad sp list --filter "appId eq '$CLIENT_ID'" --query "[0].id" -o tsv)" ] || az ad sp create --id "$CLIENT_ID" --output none
 
 # 4) switch the console to SSO
 az webapp config appsettings set -n "$APP" -g "$RG" --output none --settings \

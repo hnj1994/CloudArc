@@ -11,7 +11,10 @@ param(
     [string]$ResourceGroup = "rg-cloudarc",
     [string]$Name = "CloudArc Console"
 )
-$ErrorActionPreference = "Stop"
+# "Continue", not "Stop": Windows PowerShell 5 / ISE turns anything a native command writes to stderr
+# (including harmless az warnings) into a terminating error under "Stop". Failures are detected from
+# $LASTEXITCODE in Invoke-Az instead.
+$ErrorActionPreference = "Continue"
 
 function Invoke-Az {
     $out = & az @args
@@ -23,13 +26,13 @@ $hostName = Invoke-Az webapp show -n $App -g $ResourceGroup --query defaultHostN
 $tenant = Invoke-Az account show --query tenantId -o tsv
 $graph = "https://graph.microsoft.com/v1.0"
 
-$clientId = & az ad app list --display-name $Name --query "[0].appId" -o tsv
+$clientId = Invoke-Az ad app list --display-name $Name --query "[0].appId" -o tsv
 if (-not $clientId) {
     $clientId = Invoke-Az ad app create --display-name $Name --sign-in-audience AzureADMyOrg --query appId -o tsv
     Write-Host "Created app registration '$Name' ($clientId)"
 }
 $objectId = Invoke-Az ad app show --id $clientId --query id -o tsv
-$scopeId = & az ad app show --id $clientId --query "api.oauth2PermissionScopes[?value=='access_as_user'].id | [0]" -o tsv
+$scopeId = Invoke-Az ad app show --id $clientId --query "api.oauth2PermissionScopes[?value=='access_as_user'].id | [0]" -o tsv
 if (-not $scopeId) { $scopeId = [guid]::NewGuid().ToString() }
 
 function Patch-App($body) {
@@ -65,8 +68,8 @@ Patch-App @{
 Patch-App @{ api = @{ preAuthorizedApplications = @(@{ appId = $clientId; delegatedPermissionIds = @($scopeId) }) } }
 
 # 3) enterprise application (service principal) so users in the tenant can sign in
-& az ad sp show --id $clientId --output none 2>$null
-if ($LASTEXITCODE -ne 0) { Invoke-Az ad sp create --id $clientId --output none | Out-Null }
+$spId = Invoke-Az ad sp list --filter "appId eq '$clientId'" --query "[0].id" -o tsv
+if (-not $spId) { Invoke-Az ad sp create --id $clientId --output none | Out-Null }
 
 # 4) switch the console to SSO
 Invoke-Az webapp config appsettings set -n $App -g $ResourceGroup --output none --settings `
