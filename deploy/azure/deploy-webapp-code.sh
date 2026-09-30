@@ -3,7 +3,7 @@
 # Needs only the Microsoft.Web resource provider: no Container Registry or Key Vault. Use this when
 # those providers are not registered in the subscription; otherwise prefer deploy-webapp.sh.
 #
-#   CLOUDARC_APP=cloudarc-isource ADMIN_EMAIL=you@example.com ./deploy/azure/deploy-webapp-code.sh
+#   CLOUDARC_APP=cloudarc-console ADMIN_EMAIL=you@example.com ./deploy/azure/deploy-webapp-code.sh
 #
 # The master key is generated once and kept as an App Service application setting (encrypted at rest
 # by the platform); re-runs never rotate it. Idempotent: re-run to ship a new version.

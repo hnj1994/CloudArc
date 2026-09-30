@@ -15,7 +15,7 @@ ADMIN_EMAIL=admin@yourcompany.com ./deploy/install.sh
 
 ```bash
 az login
-CLOUDARC_APP=cloudarc-isource ADMIN_EMAIL=you@isource.example ./deploy/azure/deploy-webapp.sh
+CLOUDARC_APP=cloudarc-console ADMIN_EMAIL=you@example.com ./deploy/azure/deploy-webapp.sh
 ```
 
 The script is idempotent; re-run it to ship a new version. It creates a Container Registry (the image is built in Azure with `az acr build`), a Key Vault holding `CLOUDARC_MASTER_KEY` (generated once, referenced from app settings), and a Linux App Service plan and Web App. The web app pulls from the registry with its managed identity, is HTTPS-only with TLS 1.2+, has Always On enabled and is health-checked on `/api/health`. Defaults are resource group `rg-cloudarc`, region `centralindia` and plan `B2`; override them with `CLOUDARC_RG`, `CLOUDARC_LOCATION` and `CLOUDARC_PLAN_SKU`.

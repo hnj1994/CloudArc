@@ -91,7 +91,7 @@ Status legend: ✅ implemented and tested · 🟡 partial (see note) · ⏳ not 
 
 | ID | Requirement | Status | Where | Tests |
 |---|---|---|---|---|
-| FR-901 | Monthly Cost & Governance Report, DOCX and PDF, iSource structure | ✅ | `reports/builder.py`, `render.py` (all 10 sections + BOQ variance) | `test_report_reconciles_with_dashboard_and_renders` |
+| FR-901 | Monthly Cost & Governance Report, DOCX and PDF, standard client structure | ✅ | `reports/builder.py`, `render.py` (all 10 sections + BOQ variance) | `test_report_reconciles_with_dashboard_and_renders` |
 | FR-902 | Scheduled report e-mail | ⏳ (P2) | Report generation exists; the scheduled e-mail job is not yet wired | — |
 | FR-903 | Export any table to CSV/XLSX | ✅ | `?format=csv\|xlsx` on list endpoints, console buttons | export test |
 | FR-904 | Standard reports (Cost Allocation, Resource Explorer, Unit Economics, Budget vs Actual, Tag Compliance) | ✅ | `/exports/{name}` | `test_api_upload_reports_and_exports` |
@@ -103,7 +103,7 @@ Status legend: ✅ implemented and tested · 🟡 partial (see note) · ⏳ not 
 |---|---|---|---|---|
 | FR-1001 | Tenant isolation at API and query level | ✅ | `tenant_access`, `Scope.where` | `test_every_tenant_route_denies_unassigned_tenant` and others |
 | FR-1002 | Platform Admin, Tenant Admin, Analyst, Viewer | ✅ | `security/auth.py` | `test_viewer_is_read_only` |
-| FR-1003 | Entra ID SSO; MFA enforced by the IdP | 🟡 | JWT validation (JWKS, aud, iss, exp) plus MSAL sign-in in the console. *Needs validation against the iSource Entra tenant.* | — |
+| FR-1003 | Entra ID SSO; MFA enforced by the IdP | 🟡 | JWT validation (JWKS, aud, iss, exp) plus MSAL sign-in in the console. *Needs validation against the production Entra tenant.* | — |
 | FR-1004 | Audit log (login, onboarding, budgets, credentials, reports) | ✅ | `audit.py` | `test_audit_log_records_actions` |
 | FR-1005 | Client-facing read-only portal | 🟡 (P3) | Client users can be given the Viewer role on their tenant; no separate branding yet | — |
 | FR-1101 | Sync monitoring, retry, back-off, failure notification | ✅ | `sync.run_due_jobs` (3 attempts, 5/10 min back-off, `sync_failure` alert) | `test_failed_sync_retries…` |

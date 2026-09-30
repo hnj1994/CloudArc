@@ -64,7 +64,7 @@ def _monthly_to_daily(monthly: float, d: date, rng: random.Random, jitter: float
 def _tenant_a(db: Database, out: Path, as_of: date, rng: random.Random) -> str:
     tid = tenants.create_tenant(db, "Demo Client A – Analytics App", tenant_id="demo-a")
     sub, rg, loc = "0f6d2a1c-1111-4c2e-9a51-3b1d7e000001", "app-prod-rg", "Central India"
-    tags = {"Environment": "Production", "Department": "IT", "Application": "Analytics-App", "Owner": "iSource Infosystems"}
+    tags = {"Environment": "Production", "Department": "IT", "Application": "Analytics-App", "Owner": "Cloud Operations"}
     vm = _rid(sub, rg, "Microsoft.Compute", "virtualMachines", "app-prod-vm01")
     disk = _rid(sub, rg, "Microsoft.Compute", "disks", "app-prod-vm01_OsDisk_1")
     old_disk = _rid(sub, rg, "Microsoft.Compute", "disks", "app-prod-vm01_datadisk_old")
@@ -197,7 +197,7 @@ B_BOQ = [
 def _tenant_b(db: Database, out: Path, as_of: date, rng: random.Random) -> str:
     tid = tenants.create_tenant(db, "Demo Client B – Healthcare Portal", tenant_id="demo-b")
     sub, rg_prod, rg_dr = "0f6d2a1c-2222-4c2e-9a51-3b1d7e000002", "hp-prod-rg", "hp-dr-rg"
-    tags = {"Environment": "Production", "Department": "Clinical-IT", "Application": "HealthPortal", "Owner": "iSource Infosystems"}
+    tags = {"Environment": "Production", "Department": "Clinical-IT", "Application": "HealthPortal", "Owner": "Cloud Operations"}
     rows, ids = [], {}
     for name, rtype, *_ in B_COMPONENTS:
         prov, typ = rtype.split("/", 1)
@@ -322,16 +322,16 @@ def seed(db: Database, out_dir: Path, as_of: date | None = None) -> dict:
         engine.run(db, tid, as_of)
         budgets.evaluate(db, tid, as_of, notify=False)
 
-    admin = auth.create_user(db, "admin@isource.example", "Platform Admin", is_platform_admin=True)
-    analyst = auth.create_user(db, "analyst@isource.example", "Cloud Engineer")
-    viewer = auth.create_user(db, "delivery@isource.example", "Delivery Manager")
+    admin = auth.create_user(db, "admin@cloudarc.example", "Platform Admin", is_platform_admin=True)
+    analyst = auth.create_user(db, "analyst@cloudarc.example", "Cloud Engineer")
+    viewer = auth.create_user(db, "delivery@cloudarc.example", "Delivery Manager")
     auth.assign_role(db, analyst, a, "analyst")
     auth.assign_role(db, analyst, c, "analyst")
     auth.assign_role(db, viewer, b, "viewer")
     tokens = {
-        "admin@isource.example (platform admin)": auth.issue_token(db, admin, "demo"),
-        "analyst@isource.example (analyst: A, C)": auth.issue_token(db, analyst, "demo"),
-        "delivery@isource.example (viewer: B)": auth.issue_token(db, viewer, "demo"),
+        "admin@cloudarc.example (platform admin)": auth.issue_token(db, admin, "demo"),
+        "analyst@cloudarc.example (analyst: A, C)": auth.issue_token(db, analyst, "demo"),
+        "delivery@cloudarc.example (viewer: B)": auth.issue_token(db, viewer, "demo"),
     }
     (out_dir / "demo_tokens.json").write_text(json.dumps(tokens, indent=2))
     return {"tenants": [a, b, c], "as_of": as_of.isoformat(), "tokens": tokens, "generated_at": datetime.now().isoformat()}

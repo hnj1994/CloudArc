@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploy CloudArc to Azure App Service (Web App for Containers). Idempotent: re-run to ship a new version.
 #
-#   CLOUDARC_APP=cloudarc-isource ADMIN_EMAIL=you@isource.example ./deploy/azure/deploy-webapp.sh
+#   CLOUDARC_APP=cloudarc-console ADMIN_EMAIL=you@example.com ./deploy/azure/deploy-webapp.sh
 #
 # Creates (if missing) in one resource group:
 #   Azure Container Registry  (image built in the cloud with `az acr build` — no local Docker needed)
@@ -14,7 +14,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-APP="${CLOUDARC_APP:?set CLOUDARC_APP to a globally unique web app name, e.g. cloudarc-isource}"
+APP="${CLOUDARC_APP:?set CLOUDARC_APP to a globally unique web app name, e.g. cloudarc-console}"
 RG="${CLOUDARC_RG:-rg-cloudarc}"
 LOCATION="${CLOUDARC_LOCATION:-centralindia}"
 SKU="${CLOUDARC_PLAN_SKU:-B2}"                       # B2: 2 vCPU / 3.5 GB. P1v3 for production workloads.

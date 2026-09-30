@@ -18,6 +18,7 @@ from .. import inventory
 from ..analytics import allocation, costs
 from ..analytics.filters import Scope
 from ..analytics.forecast import multi_month_forecast
+from ..config import get_settings
 from ..db import Database
 from ..recommendations import engine
 from ..tenants import get_tenant, list_accounts
@@ -143,7 +144,7 @@ def build(db: Database, tenant_id: str, month: date | None = None, workdir: Path
           ("Accounts / subscriptions", ", ".join(a["name"] or a["external_id"] for a in accounts) or "—"),
           ("Reporting period", f"{fmt_date(month)} – {fmt_date(month_end(month))}"),
           ("Data as of", fmt_date(as_of)), ("Report date", fmt_date(date.today())),
-          ("Currency", f"{tenant['currency']} (pre-tax)"), ("Prepared by", "iSource Infosystems — CloudArc")])
+          ("Currency", f"{tenant['currency']} (pre-tax)"), ("Prepared by", get_settings().org_name)])
     r.pagebreak()
 
     # 1. Executive summary ---------------------------------------------------------------------

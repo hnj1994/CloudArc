@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ..config import get_settings
 from .builder import Report
 
 ACCENT = (0x1F, 0x4E, 0x9E)
@@ -46,7 +47,7 @@ def to_docx(report: Report, path: Path) -> Path:
     header.runs[0].font.size = Pt(8)
     footer = sec.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    footer.add_run("iSource Infosystems   |   Page ")
+    footer.add_run(f"{get_settings().org_name}   |   Page ")
     _docx_page_field(footer, "PAGE")
     footer.add_run(" of ")
     _docx_page_field(footer, "NUMPAGES")
@@ -183,7 +184,7 @@ def to_pdf(report: Report, path: Path) -> Path:
         canvas.setFont(regular, 7.5)
         canvas.setFillColor(colors.grey)
         canvas.drawString(doc.leftMargin, A4[1] - 0.45 * inch, f"{report.title} — {report.tenant}")
-        canvas.drawRightString(A4[0] - doc.rightMargin, 0.45 * inch, f"iSource Infosystems   |   Page {doc.page}")
+        canvas.drawRightString(A4[0] - doc.rightMargin, 0.45 * inch, f"{get_settings().org_name}   |   Page {doc.page}")
         canvas.restoreState()
 
     SimpleDocTemplate(str(path), pagesize=A4, leftMargin=0.75 * inch, rightMargin=0.75 * inch,
