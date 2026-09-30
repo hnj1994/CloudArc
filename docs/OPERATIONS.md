@@ -23,7 +23,7 @@ The script is idempotent; re-run it to ship a new version. It creates a Containe
 - **One instance only.** DuckDB allows a single writer and the scheduler runs in-process, so the plan is pinned to one worker. Scale up, not out.
 - **Data** lives on App Service persistent storage (`/home/cloudarc`). Back it up with `cloudarc backup` or App Service backups.
 - **First admin.** With `ADMIN_EMAIL` set on a fresh database, the admin API token is written to `/home/cloudarc/bootstrap-admin-token.txt`. It is never written to the logs. The script prints the `az rest` commands to read the file once and then delete it.
-- **Continuous deployment.** `.github/workflows/deploy-azure.yml` runs the tests, builds the image in the registry and rolls it out on every push to `main`. It needs an OIDC federated credential; setup is described in the workflow header.
+- **Continuous deployment.** `.github/workflows/deploy-azure.yml` runs the tests and deploys the code on every push to `main`, the same way `deploy-webapp-code.sh` does, then checks `/api/health`. Set it up once with `.\deploy\azure\setup-github-deploy.ps1 -App cloudarc-console -Repo <owner>/<repo>`, or the `.sh` version in Cloud Shell. The script creates a dedicated Entra app whose federated credential trusts only workflow runs on `main`, so no client secret exists. It grants that app Website Contributor on the one web app and sets the `AZURE_*` secrets and variables, using the GitHub CLI if installed; otherwise it prints them for you to add.
 - **Not yet validated on a live subscription:** the script has only been syntax-checked. In particular, confirm on the first run that the non-root container user can write to `/home`.
 
 ### Platform sign-in (Entra ID SSO)
