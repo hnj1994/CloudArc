@@ -66,8 +66,12 @@ async function boot() {
   applyTheme(localStorageGet("cloudarc.theme"));
   try { S.config = await (await fetch("/api/config")).json(); } catch (_) { S.config = {}; }
   if (S.config.auth_mode === "entra" && S.config.entra_client_id) {
+    // SSO is the sign-in; token sign-in (automation, break-glass) stays one click away.
     $("#sso-btn").classList.remove("hidden");
+    $("#token-toggle").classList.remove("hidden");
     try { await initMsal(); if (await refreshSsoToken()) { await start(); return; } } catch (_) { /* fall through to login */ }
+  } else {
+    $("#token-form").classList.remove("hidden");
   }
   S.token = sessionStorageGet("cloudarc.token");
   if (S.token) { try { await start(); return; } catch (_) { S.token = null; } }
@@ -84,6 +88,12 @@ function logout() {
   if (S.msal) { const acct = S.msal.getActiveAccount(); S.msal.clearCache?.({ account: acct }); }
   showLogin();
 }
+
+$("#token-toggle").addEventListener("click", () => {
+  $("#token-toggle").classList.add("hidden");
+  $("#token-form").classList.remove("hidden");
+  $("#token").focus();
+});
 
 $("#token-form").addEventListener("submit", async (e) => {
   e.preventDefault();

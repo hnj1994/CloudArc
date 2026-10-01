@@ -43,7 +43,26 @@ The script creates the app registration, redirect URIs and scope, pre-authorizes
 4. Set `CLOUDARC_AUTH_MODE=entra`, `CLOUDARC_ENTRA_TENANT_ID` and `CLOUDARC_ENTRA_CLIENT_ID`, then restart.
 5. Users must be pre-provisioned under Administration (by e-mail/UPN) and assigned to clients. Sign-in alone grants nothing.
 
-API tokens (`cloudarc create-user … --token`, or Administration › Issue API token) remain available for automation and read-only integrations.
+API tokens (`cloudarc create-user … --token`, or Administration › Issue API token) remain available for automation and read-only integrations. When SSO is on, the sign-in page shows only **Sign in with Microsoft**; token sign-in is behind **Use an API token instead**.
+
+### Custom domain and browser warnings
+
+Shared `*.azurewebsites.net` addresses are often used for phishing pages. A new sign-in page on one can be flagged by Google Safe Browsing (Chrome's red "Dangerous site" warning). Run the console on your own subdomain:
+
+```powershell
+.\deploy\azure\add-custom-domain.ps1 -App cloudarc-console -Domain cloudarc.yourcompany.com
+```
+
+The first run prints a CNAME and an `asuid` TXT record to create at your DNS provider. Run it again once they resolve. It then binds the domain, issues a free managed certificate, enforces HTTPS, and adds the SSO redirect URIs. `add-custom-domain.sh` is the bash equivalent.
+
+To clear an existing Safe Browsing flag, prove ownership in [Google Search Console](https://search.google.com/search-console):
+1. Add a **URL prefix** property for the console address.
+2. Choose **HTML tag** as the verification method and copy only the `content` value.
+3. Set it as `CLOUDARC_GOOGLE_SITE_VERIFICATION` on the web app; the console serves the tag on `/`.
+4. Select **Verify**.
+5. Under **Security & manual actions › Security issues**, select **Request review**.
+
+Do steps 1–4 for each address you use: the custom domain and the `azurewebsites.net` address are separate properties.
 
 ## 2. Onboard a client subscription
 

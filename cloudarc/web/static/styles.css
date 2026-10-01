@@ -61,6 +61,7 @@ h3 { font-size: 14px; margin-bottom: 10px; }
 .login-card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 32px; width: min(380px, 100%); box-shadow: var(--shadow); }
 .login-card h1 { font-size: 24px; }
 .login-card form { display: grid; gap: 8px; margin-top: 20px; }
+.login-card .link-btn { display: block; margin: 14px auto 0; background: none; border: 0; padding: 4px; color: var(--text-secondary); font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
 .logo { color: var(--accent); }
 
 /* shell */

@@ -15,10 +15,11 @@
       <h1><span class="logo">☁</span> CloudArc</h1>
       <p class="muted">Cloud cost management &amp; governance</p>
       <button id="sso-btn" class="btn primary hidden">Sign in with Microsoft</button>
-      <form id="token-form">
+      <button id="token-toggle" class="link-btn hidden" type="button">Use an API token instead</button>
+      <form id="token-form" class="hidden">
         <label for="token">API token</label>
         <input id="token" type="password" autocomplete="off" placeholder="ca_…" required>
-        <button class="btn primary" type="submit">Sign in</button>
+        <button class="btn primary" type="submit">Sign in with token</button>
       </form>
       <p id="login-error" class="error"></p>
     </div>
