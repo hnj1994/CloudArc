@@ -16,8 +16,16 @@ default_host=$(az webapp show -n "$APP" -g "$RG" --query defaultHostName -o tsv)
 verification_id=$(az webapp show -n "$APP" -g "$RG" --query customDomainVerificationId -o tsv)
 
 # 1) DNS: CNAME for traffic, TXT asuid.<domain> to prove ownership to App Service.
-cname=$(dig +short CNAME "$DOMAIN" | sed 's/\.$//' | tr '[:upper:]' '[:lower:]')
-txt=$(dig +short TXT "asuid.$DOMAIN" | tr -d '"')
+# dig when available, otherwise DNS-over-HTTPS (dns.google) so the check also works where dig is missing.
+lookup() {
+  if command -v dig >/dev/null; then dig +short "$2" "$1"; return; fi
+  curl -fsS "https://dns.google/resolve?name=$1&type=$2" | python3 -c '
+import json, sys
+t = {"CNAME": 5, "TXT": 16}[sys.argv[1]]
+print("\n".join(a["data"] for a in json.load(sys.stdin).get("Answer", []) if a["type"] == t))' "$2"
+}
+cname=$(lookup "$DOMAIN" CNAME | sed 's/\.$//' | tr '[:upper:]' '[:lower:]')
+txt=$(lookup "asuid.$DOMAIN" TXT | tr -d '"')
 if [[ "$cname" != "$default_host" || "$txt" != *"$verification_id"* ]]; then
   echo "Create these DNS records for $DOMAIN, wait for them to resolve, then run this script again:"
   echo
