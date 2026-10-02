@@ -33,6 +33,7 @@ class Settings:
     smtp_password: str | None = None
     smtp_from: str | None = None
     org_name: str = "CloudArc"  # shown as "Prepared by" and in report footers
+    google_site_verification: str | None = None  # Search Console HTML-tag token, served as a meta tag on "/"
     llm_provider: str | None = None  # None | "anthropic"
     llm_model: str | None = None
     llm_data_policy_approved: bool = False
@@ -76,6 +77,7 @@ def get_settings() -> Settings:
         smtp_password=_env("SMTP_PASSWORD"),
         smtp_from=_env("SMTP_FROM"),
         org_name=_env("ORG_NAME", "CloudArc"),
+        google_site_verification=_env("GOOGLE_SITE_VERIFICATION"),
         llm_provider=_env("LLM_PROVIDER"),
         llm_model=_env("LLM_MODEL"),
         llm_data_policy_approved=_bool(_env("LLM_DATA_POLICY_APPROVED")),

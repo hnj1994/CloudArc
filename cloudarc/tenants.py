@@ -51,7 +51,7 @@ def list_tenants(db: Database, ids: list[str] | None = None) -> list[dict]:
 def list_accounts(db: Database, tenant_id: str) -> list[dict]:
     return db.query(
         "SELECT id, provider, external_id, name, enabled, credential_id, permission_status, permission_detail, "
-        "last_sync_at, last_sync_status, last_sync_duration_s, last_error, created_at "
+        "last_sync_at, last_sync_status, last_sync_duration_s, last_error, config, created_at "
         "FROM cloud_accounts WHERE tenant_id = ? ORDER BY provider, name",
         [tenant_id],
     )
@@ -65,21 +65,22 @@ def get_account(db: Database, tenant_id: str, account_id: str) -> dict:
 
 
 def upsert_account(db: Database, tenant_id: str, provider: str, external_id: str, name: str | None,
-                   credential_id: str | None, enabled: bool = True) -> str:
+                   credential_id: str | None, enabled: bool = True, config: dict | None = None) -> str:
     existing = db.scalar(
         "SELECT id FROM cloud_accounts WHERE tenant_id = ? AND provider = ? AND external_id = ?",
         [tenant_id, provider, external_id.lower()],
     )
     if existing:
         db.execute(
-            "UPDATE cloud_accounts SET name = COALESCE(?, name), credential_id = COALESCE(?, credential_id), enabled = ? WHERE id = ?",
-            [name, credential_id, enabled, existing],
+            "UPDATE cloud_accounts SET name = COALESCE(?, name), credential_id = COALESCE(?, credential_id), enabled = ?, "
+            "config = COALESCE(?, config) WHERE id = ?",
+            [name, credential_id, enabled, json.dumps(config) if config is not None else None, existing],
         )
         return existing
     aid = new_id()
     db.execute(
-        "INSERT INTO cloud_accounts (id, tenant_id, provider, external_id, name, credential_id, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [aid, tenant_id, provider, external_id.lower(), name, credential_id, enabled],
+        "INSERT INTO cloud_accounts (id, tenant_id, provider, external_id, name, credential_id, enabled, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [aid, tenant_id, provider, external_id.lower(), name, credential_id, enabled, json.dumps(config) if config is not None else None],
     )
     return aid
 
@@ -91,25 +92,26 @@ def set_account_enabled(db: Database, tenant_id: str, account_id: str, enabled: 
 
 # ---- credentials ------------------------------------------------------------------------------
 
-def store_credential(db: Database, tenant_id: str, provider: str, directory_id: str, client_id: str, secret: str) -> str:
+def store_credential(db: Database, tenant_id: str, provider: str, directory_id: str | None, client_id: str, secret: str,
+                     secret_hint: str | None = None) -> str:
     cid = new_id()
     sealed = SecretBox.from_settings().seal(secret, aad=f"cred:{tenant_id}:{cid}")
     db.execute(
         "INSERT INTO credentials (id, tenant_id, provider, directory_id, client_id, secret_ciphertext, secret_hint) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [cid, tenant_id, provider, directory_id, client_id, sealed, hint(secret)],
+        [cid, tenant_id, provider, directory_id, client_id, sealed, secret_hint or hint(secret)],
     )
     return cid
 
 
-def rotate_credential(db: Database, tenant_id: str, credential_id: str, new_secret: str) -> None:
+def rotate_credential(db: Database, tenant_id: str, credential_id: str, new_secret: str, secret_hint: str | None = None) -> None:
     """Secret/certificate rotation without re-onboarding (FR-106)."""
     if not db.scalar("SELECT count(*) FROM credentials WHERE tenant_id = ? AND id = ?", [tenant_id, credential_id]):
         raise NotFound("credential not found")
     sealed = SecretBox.from_settings().seal(new_secret, aad=f"cred:{tenant_id}:{credential_id}")
     db.execute(
         "UPDATE credentials SET secret_ciphertext = ?, secret_hint = ?, rotated_at = now() WHERE tenant_id = ? AND id = ?",
-        [sealed, hint(new_secret), tenant_id, credential_id],
+        [sealed, secret_hint or hint(new_secret), tenant_id, credential_id],
     )
 
 

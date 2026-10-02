@@ -63,8 +63,8 @@ $values = [ordered]@{
     "secret AZURE_CLIENT_ID"       = $clientId
     "secret AZURE_TENANT_ID"       = $tenant
     "secret AZURE_SUBSCRIPTION_ID" = $subscription
-    "var AZURE_WEBAPP_NAME"        = $App
-    "var AZURE_RESOURCE_GROUP"     = $ResourceGroup
+    "variable AZURE_WEBAPP_NAME"   = $App
+    "variable AZURE_RESOURCE_GROUP" = $ResourceGroup
 }
 
 if (Get-Command gh -ErrorAction SilentlyContinue) {

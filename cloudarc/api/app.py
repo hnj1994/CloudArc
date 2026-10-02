@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
@@ -23,6 +24,7 @@ from ..tenants import NotFound
 from . import admin, routes
 
 log = logging.getLogger("cloudarc.api")
+SITE_VERIFICATION = re.compile(r"[A-Za-z0-9_-]{10,100}")  # Search Console token alphabet; anything else is refused
 STATIC = Path(__file__).resolve().parent.parent / "web" / "static"
 
 
@@ -48,6 +50,7 @@ def create_app(db: Database | None = None, start_scheduler: bool | None = None) 
         yield
         if scheduler:
             scheduler.stop()
+        get_db().checkpoint()  # leave nothing in the WAL on a clean shutdown
 
     app = FastAPI(title="CloudArc", version=__version__, lifespan=lifespan,
                   description="Multi-tenant cloud cost management & governance API")
@@ -84,7 +87,15 @@ def create_app(db: Database | None = None, start_scheduler: bool | None = None) 
 
         @app.get("/", include_in_schema=False)
         def index():
-            return FileResponse(STATIC / "index.html")
+            token = get_settings().google_site_verification
+            if not token:
+                return FileResponse(STATIC / "index.html")
+            if not SITE_VERIFICATION.fullmatch(token):
+                log.warning("ignoring CLOUDARC_GOOGLE_SITE_VERIFICATION: unexpected characters")
+                return FileResponse(STATIC / "index.html")
+            html = (STATIC / "index.html").read_text(encoding="utf-8")
+            meta = f'<meta name="google-site-verification" content="{token}">'
+            return HTMLResponse(html.replace("<head>", f"<head>\n  {meta}", 1))
 
     return app
 

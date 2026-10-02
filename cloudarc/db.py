@@ -10,12 +10,15 @@ for writing, so the scheduler runs inside the API process.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from contextlib import contextmanager
 from typing import Any, Iterator
 
 import duckdb
+
+log = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tenants (
@@ -299,6 +302,9 @@ CREATE TABLE IF NOT EXISTS report_runs (
     created_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
+-- Additive migrations for databases created by earlier versions.
+-- Non-secret connector settings (AWS CUR bucket/prefix, external ID; GCP export table). Secrets stay in credentials.
+ALTER TABLE cloud_accounts ADD COLUMN IF NOT EXISTS config JSON;
 """
 
 
@@ -316,9 +322,13 @@ class Database:
 
     def __init__(self, path: str = ":memory:"):
         self.path = path
-        self._conn = duckdb.connect(path)
+        self._conn = _connect(path)
         self._write_lock = threading.RLock()
         self._conn.execute(SCHEMA)
+        if path != ":memory:":
+            # Fold schema changes (and everything before them) into the database file now, so a restart
+            # never has to replay an ALTER from the write-ahead log (see _connect).
+            self._conn.execute("CHECKPOINT")
 
     def cursor(self) -> duckdb.DuckDBPyConnection:
         return self._conn.cursor()
@@ -366,8 +376,37 @@ class Database:
             finally:
                 cur.close()
 
+    def checkpoint(self) -> None:
+        """Write the WAL into the database file; cheap, and keeps restarts from depending on WAL replay."""
+        if self.path != ":memory:":
+            with self._write_lock:
+                self._conn.execute("CHECKPOINT")
+
     def close(self) -> None:
         self._conn.close()
+
+
+def _connect(path: str) -> duckdb.DuckDBPyConnection:
+    """Open the database, recovering from a WAL that DuckDB cannot replay when opening the file directly.
+
+    DuckDB 1.5 fails to replay an ``ALTER TABLE … ADD COLUMN`` on a table with ``DEFAULT now()`` columns
+    when the file is the main database ("no default database set"). Replaying it while the file is
+    attached to an in-memory database works; checkpointing there folds the WAL into the file.
+    """
+    try:
+        return duckdb.connect(path)
+    except duckdb.InternalException as exc:
+        if path == ":memory:" or "replaying WAL" not in str(exc):
+            raise
+        log.warning("WAL replay failed on open; replaying via ATTACH and checkpointing: %s", str(exc)[:200])
+        recovery = duckdb.connect(":memory:")
+        try:
+            recovery.execute("ATTACH '" + path.replace("'", "''") + "' AS recovered")
+            recovery.execute("CHECKPOINT recovered")
+            recovery.execute("DETACH recovered")
+        finally:
+            recovery.close()
+        return duckdb.connect(path)
 
 
 _db: Database | None = None

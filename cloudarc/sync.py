@@ -20,7 +20,10 @@ from . import alerts, audit, budgets
 from .analytics.costs import anomalies_by
 from .analytics.filters import Scope
 from .config import get_settings
+from .connectors.aws import CE_COLUMNS, AwsClient, AwsError
 from .connectors.azure import DISK_METRICS, SQL_METRICS, VM_METRICS, AzureClient, AzureError
+from .connectors.gcp import COLUMNS as GCP_COLUMNS
+from .connectors.gcp import GcpClient, GcpError, export_query
 from .db import Database, new_id
 from .ingest.loader import ingest_files
 from .inventory import upsert_metrics, upsert_resources
@@ -33,10 +36,20 @@ MAX_ATTEMPTS = 3
 MAX_METRIC_RESOURCES = 200
 
 ClientFactory = Callable[[dict], AzureClient]
+AWS_BACKFILL_MONTHS = 12  # Cost Explorer keeps ~13 months of daily data
+GCP_BACKFILL_MONTHS = 12  # the export only holds data from the day it was enabled; older months are simply empty
 
 
 def _default_factory(cred: dict) -> AzureClient:
     return AzureClient(cred["directory_id"], cred["client_id"], cred["secret"])
+
+
+def aws_client(cred: dict, config: dict) -> AwsClient:
+    return AwsClient(cred["client_id"], cred["secret"], cred.get("directory_id"), config.get("external_id"))
+
+
+def gcp_client(cred: dict, config: dict) -> GcpClient:
+    return GcpClient(cred["secret"])
 
 
 def _month_chunks(start: date, end: date):
@@ -48,15 +61,20 @@ def _month_chunks(start: date, end: date):
 
 
 def sync_account(db: Database, tenant_id: str, account_id: str, factory: ClientFactory = _default_factory,
-                 today: date | None = None) -> dict:
+                 today: date | None = None, aws_factory=aws_client, gcp_factory=gcp_client) -> dict:
     s = get_settings()
     t0 = time.time()
     acct = get_account(db, tenant_id, account_id)
-    if acct["provider"] != "azure":
-        raise ValueError("API sync is implemented for Azure; load AWS/GCP exports via file ingestion")
     if not acct["credential_id"]:
         raise ValueError("account has no credential; upload billing files or attach a credential")
-    client = factory(load_credential(db, tenant_id, acct["credential_id"]))
+    cred = load_credential(db, tenant_id, acct["credential_id"])
+    if acct["provider"] == "aws":
+        return _finish(db, account_id, t0, _sync_aws(db, tenant_id, acct, aws_factory(cred, _config(acct)), today or date.today()))
+    if acct["provider"] == "gcp":
+        return _finish(db, account_id, t0, _sync_gcp(db, tenant_id, acct, gcp_factory(cred, _config(acct)), today or date.today()))
+    if acct["provider"] != "azure":
+        raise ValueError(f"no API connector for provider {acct['provider']!r}")
+    client = factory(cred)
     sub = acct["external_id"]
     today = today or date.today()
     has_data = db.scalar("SELECT count(*) FROM cost_records WHERE tenant_id = ? AND account_id = ?", [tenant_id, account_id])
@@ -131,6 +149,127 @@ def sync_account(db: Database, tenant_id: str, account_id: str, factory: ClientF
     return result
 
 
+def _config(acct: dict) -> dict:
+    return json.loads(acct.get("config") or "{}")
+
+
+def _finish(db: Database, account_id: str, t0: float, result: dict) -> dict:
+    duration = time.time() - t0
+    warnings = result.setdefault("warnings", [])
+    db.execute(
+        "UPDATE cloud_accounts SET last_sync_at = now(), last_sync_status = ?, last_sync_duration_s = ?, last_error = ? WHERE id = ?",
+        ["partial" if warnings else "succeeded", duration, "; ".join(warnings) or None, account_id],
+    )
+    result["duration_s"] = round(duration, 1)
+    return result
+
+
+def _window(db: Database, tenant_id: str, account_id: str, source: str, today: date, backfill_months: int) -> tuple[date, date]:
+    """Look-back window once this connection has loaded successfully, else a backfill. Ends yesterday (today is partial)."""
+    loaded = db.scalar("SELECT count(*) FROM ingestion_runs WHERE tenant_id = ? AND source LIKE ? AND status = 'succeeded'",
+                       [tenant_id, f"{source}%:{account_id}"])
+    end = today - timedelta(days=1)
+    start = end - timedelta(days=get_settings().sync_lookback_days) if loaded else add_months(month_start(today), -backfill_months)
+    return start, end
+
+
+def _write_csv(path: Path, columns: list[str], rows) -> int:
+    import csv
+
+    n = 0
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=columns, extrasaction="ignore")
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: ("" if v is None else v) for k, v in r.items()})
+            n += 1
+    return n
+
+
+def _check_total(label: str, source_total: float, independent: float) -> None:
+    if abs(source_total - independent) > max(0.005 * abs(independent), 0.05):
+        raise RuntimeError(f"reconciliation mismatch for {label}: rows sum to {source_total:.2f}, provider total {independent:.2f}")
+
+
+def _sync_aws(db: Database, tenant_id: str, acct: dict, client: AwsClient, today: date) -> dict:
+    """CUR files (line items) for billing periods that have them; Cost Explorer (daily summary) for the rest."""
+    cfg = _config(acct)
+    aid = acct["id"]
+    start, end = _window(db, tenant_id, aid, "aws-", today, AWS_BACKFILL_MONTHS)
+    result: dict = {"window": [start.isoformat(), end.isoformat()], "cost_rows": 0, "sources": {}, "warnings": []}
+    if end < start:
+        return result
+    perm = client.check(cfg.get("cur_bucket"), cfg.get("cur_prefix"))
+    db.execute("UPDATE cloud_accounts SET permission_status = ?, permission_detail = ? WHERE id = ?",
+               [perm["status"], json.dumps(perm), aid])
+    result["permissions"] = perm["status"]
+    if perm["checks"].get("Cost Explorer") != "ok" and perm["checks"].get("CUR files") != "ok":
+        raise AwsError(f"no cost source is readable: {perm['checks']}")
+
+    with tempfile.TemporaryDirectory(prefix="cloudarc-aws-") as tmp:
+        for d0, d1 in _month_chunks(start, end):
+            period = d0.strftime("%Y-%m")
+            keys = []
+            if cfg.get("cur_bucket") and perm["checks"].get("CUR files") == "ok":
+                keys = client.cur_files(cfg["cur_bucket"], cfg.get("cur_prefix"), period)
+                if not keys and period == end.strftime("%Y-%m"):
+                    result["warnings"].append(f"no CUR files yet for {period} in s3://{cfg['cur_bucket']}/{cfg.get('cur_prefix') or ''} "
+                                              "(the first delivery can take 24 h); used Cost Explorer")
+            if keys:
+                paths = []
+                for i, key in enumerate(keys):
+                    p = Path(tmp) / f"cur-{period}-{i}{''.join(Path(key).suffixes[-2:])}"
+                    client.download(cfg["cur_bucket"], key, str(p))
+                    paths.append(p)
+                res = ingest_files(db, tenant_id, paths, provider="aws", source=f"aws-cur:{aid}")
+                if not res.reconciled:
+                    raise RuntimeError(f"reconciliation mismatch for CUR {period}: source {res.source_total} vs loaded {res.loaded_total}")
+                result["sources"][period] = "cur"
+            elif perm["checks"].get("Cost Explorer") == "ok":
+                p = Path(tmp) / f"ce-{d0}.csv"
+                if not _write_csv(p, CE_COLUMNS, client.daily_cost(d0, d1)):
+                    result["sources"][period] = "cost-explorer (no cost)"
+                    continue
+                res = ingest_files(db, tenant_id, [p], provider="aws", source=f"aws-ce:{aid}")
+                _check_total(f"Cost Explorer {d0}..{d1}", res.source_total, client.total_cost(d0, d1))
+                result["sources"][period] = "cost-explorer"
+            else:
+                continue
+            result["cost_rows"] += res.rows_loaded
+    if perm["status"] != "ok":
+        result["warnings"].append("missing permission: " + ", ".join(perm["missing"]))
+    return result
+
+
+def _sync_gcp(db: Database, tenant_id: str, acct: dict, client: GcpClient, today: date) -> dict:
+    cfg = _config(acct)
+    aid = acct["id"]
+    start, end = _window(db, tenant_id, aid, "gcp-", today, GCP_BACKFILL_MONTHS)
+    result: dict = {"window": [start.isoformat(), end.isoformat()], "cost_rows": 0, "warnings": []}
+    if end < start:
+        return result
+    perm = client.check(cfg["table"], cfg.get("job_project"))
+    db.execute("UPDATE cloud_accounts SET permission_status = ?, permission_detail = ? WHERE id = ?",
+               [perm["status"], json.dumps(perm), aid])
+    result["permissions"] = perm["status"]
+    if perm["status"] != "ok":
+        raise GcpError(f"missing permission: {perm['checks']}")
+    info = perm["table"]
+    with tempfile.TemporaryDirectory(prefix="cloudarc-gcp-") as tmp:
+        for d0, d1 in _month_chunks(start, end):
+            sql, params = export_query(cfg["table"], info, d0, d1)
+            p = Path(tmp) / f"gcp-{d0}.csv"
+            if not _write_csv(p, GCP_COLUMNS, client.query(sql, params, info, cfg.get("job_project"))):
+                continue
+            res = ingest_files(db, tenant_id, [p], provider="gcp", source=f"gcp-bq:{aid}")
+            if not res.reconciled:
+                raise RuntimeError(f"reconciliation mismatch for {d0:%Y-%m}: source {res.source_total} vs loaded {res.loaded_total}")
+            result["cost_rows"] += res.rows_loaded
+    if not result["cost_rows"]:
+        result["warnings"].append("the export table has no rows in this window yet (data starts the day the export was enabled)")
+    return result
+
+
 def _short(exc: Exception) -> str:
     text = str(exc)
     for code in ("MissingSubscriptionRegistration", "AuthorizationFailed", "SubscriptionNotRegistered"):
@@ -176,7 +315,8 @@ def enqueue(db: Database, tenant_id: str, account_id: str, requested_by: str | N
     return jid
 
 
-def run_due_jobs(db: Database, factory: ClientFactory = _default_factory, now: datetime | None = None) -> int:
+def run_due_jobs(db: Database, factory: ClientFactory = _default_factory, now: datetime | None = None,
+                 aws_factory=aws_client, gcp_factory=gcp_client) -> int:
     now = now or datetime.utcnow()
     jobs = db.query("SELECT id, tenant_id, account_id, attempts FROM sync_jobs WHERE status = 'queued' AND next_run_at <= ? "
                     "ORDER BY next_run_at", [now])
@@ -184,7 +324,7 @@ def run_due_jobs(db: Database, factory: ClientFactory = _default_factory, now: d
     for j in jobs:
         db.execute("UPDATE sync_jobs SET status = 'running', attempts = attempts + 1 WHERE id = ?", [j["id"]])
         try:
-            res = sync_account(db, j["tenant_id"], j["account_id"], factory)
+            res = sync_account(db, j["tenant_id"], j["account_id"], factory, aws_factory=aws_factory, gcp_factory=gcp_factory)
             db.execute("UPDATE sync_jobs SET status = 'succeeded', finished_at = now(), last_error = NULL WHERE id = ?", [j["id"]])
             audit.record(db, "sync.succeeded", tenant_id=j["tenant_id"], target=j["account_id"], detail=res)
             tenants_done.add(j["tenant_id"])
@@ -209,6 +349,8 @@ def run_due_jobs(db: Database, factory: ClientFactory = _default_factory, now: d
             post_sync(db, tid)
         except Exception:  # noqa: BLE001
             log.exception("post-sync processing failed for tenant %s", tid)
+    if jobs:
+        db.checkpoint()
     return len(jobs)
 
 
