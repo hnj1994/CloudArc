@@ -299,6 +299,9 @@ CREATE TABLE IF NOT EXISTS report_runs (
     created_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
+-- Additive migrations for databases created by earlier versions.
+-- Non-secret connector settings (AWS CUR bucket/prefix, external ID; GCP export table). Secrets stay in credentials.
+ALTER TABLE cloud_accounts ADD COLUMN IF NOT EXISTS config JSON;
 """
 
 

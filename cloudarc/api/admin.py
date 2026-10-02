@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field
 
 from .. import __version__, audit, sync, tenants
 from ..config import get_settings
+from ..connectors.aws import AwsError
 from ..connectors.azure import AzureClient, AzureError
+from ..connectors.gcp import GcpError, billing_account_from_table, parse_key, parse_table
 from ..db import Database
 from ..ingest.loader import set_fx_rate
 from ..security import auth
@@ -23,6 +25,14 @@ ADMIN, ANALYST, VIEW = tenant_access("tenant_admin"), tenant_access("analyst"), 
 
 def azure_factory(request: Request) -> Callable[[str, str, str], AzureClient]:
     return getattr(request.app.state, "azure_factory", None) or (lambda d, c, s: AzureClient(d, c, s))
+
+
+def aws_factory(request: Request):
+    return getattr(request.app.state, "aws_factory", None) or sync.aws_client
+
+
+def gcp_factory(request: Request):
+    return getattr(request.app.state, "gcp_factory", None) or sync.gcp_client
 
 
 # ---- platform ------------------------------------------------------------------------------------------
@@ -234,6 +244,109 @@ def onboarding_complete(body: OnboardIn, request: Request, ctx: TenantCtx = Depe
     return {"credential_id": cred_id, "accounts": accounts}
 
 
+# ---- AWS & GCP connections ---------------------------------------------------------------------------
+
+class AwsConnectIn(BaseModel):
+    access_key_id: str = Field(pattern=r"^AKIA[A-Z0-9]{16}$", description="Access key of the read-only IAM user")
+    secret_access_key: str = Field(min_length=16, description="Stored encrypted, never returned")
+    role_arn: str | None = Field(None, description="Optional role to assume (e.g. in the payer account)")
+    external_id: str | None = Field(None, max_length=1224)
+    cur_bucket: str | None = Field(None, pattern=r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
+    cur_prefix: str | None = Field(None, max_length=512)
+    name: str | None = None
+
+
+class GcpConnectIn(BaseModel):
+    service_account_key: str = Field(min_length=100, description="JSON key file contents; stored encrypted, never returned")
+    table: str = Field(description="project.dataset.gcp_billing_export_..._v1_XXXXXX_XXXXXX_XXXXXX")
+    job_project: str | None = Field(None, pattern=r"^[a-z][a-z0-9-]{4,29}$", description="Project queries run in (default: the table's)")
+    name: str | None = None
+
+
+def _aws_parts(body: AwsConnectIn) -> tuple[dict, dict]:
+    cred = {"client_id": body.access_key_id, "secret": body.secret_access_key, "directory_id": body.role_arn or None}
+    config = {"cur_bucket": body.cur_bucket or None, "cur_prefix": (body.cur_prefix or "").strip("/") or None,
+              "external_id": body.external_id or None}
+    return cred, config
+
+
+def _aws_probe(request: Request, body: AwsConnectIn) -> dict:
+    cred, config = _aws_parts(body)
+    try:
+        client = aws_factory(request)(cred, config)
+        ident = client.identity()
+        perm = client.check(config["cur_bucket"], config["cur_prefix"])
+    except AwsError as exc:
+        raise HTTPException(400, f"AWS rejected the credential: {exc}") from exc
+    return {"account_id": ident["account_id"], "arn": ident["arn"], "permissions": perm}
+
+
+def _gcp_probe(request: Request, body: GcpConnectIn) -> dict:
+    try:
+        key = parse_key(body.service_account_key)
+        parse_table(body.table)
+        client = gcp_factory(request)({"secret": body.service_account_key}, {})
+        perm = client.check(body.table, body.job_project)
+    except GcpError as exc:
+        raise HTTPException(400, f"GCP check failed: {exc}") from exc
+    return {"client_email": key["client_email"], "billing_account": billing_account_from_table(body.table), "permissions": perm}
+
+
+@router.post("/tenants/{tenant_id}/connect/aws/validate")
+def aws_validate(body: AwsConnectIn, request: Request, ctx: TenantCtx = Depends(ADMIN), db: Database = Depends(db_dep)):
+    res = _aws_probe(request, body)
+    audit.record(db, "onboarding.validate", user_id=ctx.principal.user_id, tenant_id=ctx.tenant_id,
+                 detail={"provider": "aws", "access_key_id": body.access_key_id, "status": res["permissions"]["status"]}, ip=ctx.ip)
+    return res
+
+
+@router.post("/tenants/{tenant_id}/connect/aws", status_code=201)
+def aws_connect(body: AwsConnectIn, request: Request, ctx: TenantCtx = Depends(ADMIN), db: Database = Depends(db_dep)):
+    res = _aws_probe(request, body)
+    checks = res["permissions"]["checks"]
+    if checks.get("Cost Explorer") != "ok" and checks.get("CUR files") != "ok":
+        raise HTTPException(400, f"the credential can read neither Cost Explorer nor the CUR bucket: {checks}")
+    cred, config = _aws_parts(body)
+    # With a role, cost belongs to the role's account (normally the payer), not the IAM user's.
+    account = body.role_arn.split(":")[4] if body.role_arn else res["account_id"]
+    cred_id = tenants.store_credential(db, ctx.tenant_id, "aws", cred["directory_id"], cred["client_id"], cred["secret"])
+    aid = tenants.upsert_account(db, ctx.tenant_id, "aws", account, body.name or f"AWS {account}", cred_id, config=config)
+    db.execute("UPDATE cloud_accounts SET permission_status = ?, permission_detail = ? WHERE id = ?",
+               [res["permissions"]["status"], json.dumps(res["permissions"]), aid])
+    job = sync.enqueue(db, ctx.tenant_id, aid, ctx.principal.email)
+    audit.record(db, "onboarding.complete", user_id=ctx.principal.user_id, tenant_id=ctx.tenant_id, target=cred_id,
+                 detail={"provider": "aws", "account": account, "access_key_id": body.access_key_id, "cur_bucket": body.cur_bucket}, ip=ctx.ip)
+    return {"credential_id": cred_id, "account_id": aid, "aws_account": account, "permissions": res["permissions"], "sync_job": job}
+
+
+@router.post("/tenants/{tenant_id}/connect/gcp/validate")
+def gcp_validate(body: GcpConnectIn, request: Request, ctx: TenantCtx = Depends(ADMIN), db: Database = Depends(db_dep)):
+    res = _gcp_probe(request, body)
+    audit.record(db, "onboarding.validate", user_id=ctx.principal.user_id, tenant_id=ctx.tenant_id,
+                 detail={"provider": "gcp", "client_email": res["client_email"], "status": res["permissions"]["status"]}, ip=ctx.ip)
+    return res
+
+
+@router.post("/tenants/{tenant_id}/connect/gcp", status_code=201)
+def gcp_connect(body: GcpConnectIn, request: Request, ctx: TenantCtx = Depends(ADMIN), db: Database = Depends(db_dep)):
+    res = _gcp_probe(request, body)
+    if res["permissions"]["status"] != "ok":
+        raise HTTPException(400, f"missing permission: {res['permissions']['checks']}")
+    key = parse_key(body.service_account_key)
+    table = body.table.strip().strip("`")
+    external = res["billing_account"] or table
+    cred_id = tenants.store_credential(db, ctx.tenant_id, "gcp", body.job_project or parse_table(table)["project"], key["client_email"],
+                                       body.service_account_key, secret_hint=f"key ••••{(key.get('private_key_id') or '')[-4:]}")
+    aid = tenants.upsert_account(db, ctx.tenant_id, "gcp", external, body.name or f"GCP billing {external}", cred_id,
+                                 config={"table": table, "job_project": body.job_project or None})
+    db.execute("UPDATE cloud_accounts SET permission_status = ?, permission_detail = ? WHERE id = ?",
+               [res["permissions"]["status"], json.dumps(res["permissions"]), aid])
+    job = sync.enqueue(db, ctx.tenant_id, aid, ctx.principal.email)
+    audit.record(db, "onboarding.complete", user_id=ctx.principal.user_id, tenant_id=ctx.tenant_id, target=cred_id,
+                 detail={"provider": "gcp", "billing_account": external, "client_email": key["client_email"], "table": table}, ip=ctx.ip)
+    return {"credential_id": cred_id, "account_id": aid, "billing_account": external, "permissions": res["permissions"], "sync_job": job}
+
+
 @router.get("/tenants/{tenant_id}/accounts")
 def account_list(ctx: TenantCtx = Depends(VIEW), db: Database = Depends(db_dep)):
     """Integration health: last sync, duration, errors, permission drift (FR-105)."""
@@ -279,10 +392,20 @@ class RotateIn(BaseModel):
 @router.post("/tenants/{tenant_id}/credentials/{credential_id}/rotate")
 def credential_rotate(credential_id: str, body: RotateIn, request: Request, ctx: TenantCtx = Depends(ADMIN), db: Database = Depends(db_dep)):
     cur = tenants.load_credential(db, ctx.tenant_id, credential_id)
+    secret_hint = None
     try:
-        azure_factory(request)(cur["directory_id"], cur["client_id"], body.secret).token()
-    except AzureError as exc:
-        raise HTTPException(400, f"new secret rejected by Entra ID: {exc}") from exc
-    tenants.rotate_credential(db, ctx.tenant_id, credential_id, body.secret)
+        if cur["provider"] == "aws":  # new secret access key for the same access key id
+            aws_factory(request)({**cur, "secret": body.secret, "directory_id": None}, {}).identity()
+        elif cur["provider"] == "gcp":  # a new JSON key for the same service account
+            key = parse_key(body.secret)
+            if key["client_email"] != cur["client_id"]:
+                raise HTTPException(400, f"the new key is for {key['client_email']}, not {cur['client_id']}")
+            gcp_factory(request)({"secret": body.secret}, {}).token()
+            secret_hint = f"key ••••{(key.get('private_key_id') or '')[-4:]}"
+        else:
+            azure_factory(request)(cur["directory_id"], cur["client_id"], body.secret).token()
+    except (AzureError, AwsError, GcpError) as exc:
+        raise HTTPException(400, f"new secret rejected by {cur['provider'].upper()}: {exc}") from exc
+    tenants.rotate_credential(db, ctx.tenant_id, credential_id, body.secret, secret_hint)
     audit.record(db, "credential.rotate", user_id=ctx.principal.user_id, tenant_id=ctx.tenant_id, target=credential_id, ip=ctx.ip)
     return {"ok": True}

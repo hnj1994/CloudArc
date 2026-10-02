@@ -242,6 +242,8 @@ select:focus, input:focus, textarea:focus, .btn:focus-visible { outline: 2px sol
 .btn.ghost:hover { background: var(--hover); box-shadow: none; }
 .btn.small { padding: 4px 9px; font-size: 12px; border-radius: 8px; }
 .btn.danger { color: var(--critical-ink); }
+.seg { display: inline-flex; gap: 4px; }
+.seg .btn.on { background: var(--series-1-soft); border-color: var(--accent); font-weight: 600; }
 .btn:disabled { opacity: .55; cursor: default; transform: none; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 14px; }
 .toolbar label { display: grid; gap: 3px; font-size: 12px; color: var(--text-secondary); }
