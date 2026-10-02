@@ -215,6 +215,7 @@ function exportButtons(path, name) {
 function wireDownloads(root) { $$("[data-dl]", root).forEach((b) => b.addEventListener("click", () => download(b.dataset.dl, b.dataset.name))); }
 
 function chartTheme() {
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;  // match the console's type
   return { text: css("--text-secondary"), grid: css("--grid"), series: css("--series-1"), soft: css("--series-1-soft"), critical: css("--critical"), surface: css("--surface-1") };
 }
 function lineChart(canvas, series, anomalies) {
