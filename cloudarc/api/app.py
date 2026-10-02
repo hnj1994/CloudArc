@@ -50,6 +50,7 @@ def create_app(db: Database | None = None, start_scheduler: bool | None = None) 
         yield
         if scheduler:
             scheduler.stop()
+        get_db().checkpoint()  # leave nothing in the WAL on a clean shutdown
 
     app = FastAPI(title="CloudArc", version=__version__, lifespan=lifespan,
                   description="Multi-tenant cloud cost management & governance API")

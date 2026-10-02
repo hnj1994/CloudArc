@@ -349,6 +349,8 @@ def run_due_jobs(db: Database, factory: ClientFactory = _default_factory, now: d
             post_sync(db, tid)
         except Exception:  # noqa: BLE001
             log.exception("post-sync processing failed for tenant %s", tid)
+    if jobs:
+        db.checkpoint()
     return len(jobs)
 
 
