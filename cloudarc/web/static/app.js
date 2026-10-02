@@ -89,6 +89,13 @@ function logout() {
   showLogin();
 }
 
+$$("[data-scroll]").forEach((b) => b.addEventListener("click", () => $(`#${b.dataset.scroll}`).scrollIntoView({ behavior: "smooth", block: "start" })));
+$("#lp-signin").addEventListener("click", () => {
+  $("#lp-auth").scrollIntoView({ behavior: "smooth", block: "center" });
+  const target = !$("#sso-btn").classList.contains("hidden") ? $("#sso-btn") : $("#token");
+  target.focus({ preventScroll: true });
+});
+
 $("#token-toggle").addEventListener("click", () => {
   $("#token-toggle").classList.add("hidden");
   $("#token-form").classList.remove("hidden");
@@ -164,11 +171,11 @@ $("#tenant-select").addEventListener("change", async (e) => { S.tenant = e.targe
 $("#logout-btn").addEventListener("click", logout);
 $("#menu-btn").addEventListener("click", () => $(".sidebar").classList.toggle("open"));
 $("#theme-btn").addEventListener("click", () => {
-  const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const cur = document.documentElement.dataset.theme || "dark";
   const next = cur === "dark" ? "light" : "dark";
   applyTheme(next); localStorageSet("cloudarc.theme", next); route();
 });
-function applyTheme(t) { if (t === "dark" || t === "light") document.documentElement.dataset.theme = t; }
+function applyTheme(t) { document.documentElement.dataset.theme = t === "light" ? "light" : "dark"; }  // dark by default
 
 async function loadTenant() {
   if (!S.tenant) { S.tenantInfo = null; $("#as-of").textContent = ""; return; }
@@ -214,6 +221,28 @@ function exportButtons(path, name) {
 }
 function wireDownloads(root) { $$("[data-dl]", root).forEach((b) => b.addEventListener("click", () => download(b.dataset.dl, b.dataset.name))); }
 
+function initials(n) { return n.replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join(""); }
+/* Top 4 services keep fixed categorical slots (validated set); the rest fold into a neutral "Other". */
+function serviceSlices(top, total) {
+  const cat = [1, 2, 3, 4].map((i) => css(`--cat-${i}`));
+  const rows = top.slice(0, 4).map((r, i) => ({ ...r, color: cat[i] }));
+  const rest = total - rows.reduce((a, r) => a + r.cost, 0);
+  if (rest > 0.005 * total) rows.push({ service: "Other", cost: rest, share_pct: (100 * rest) / total, color: css("--cat-other") });
+  return rows;
+}
+function donutChart(canvas, rows) {
+  if (!window.Chart || !rows.length) return;
+  const th = chartTheme();
+  const c = new Chart(canvas, {
+    type: "doughnut",
+    data: { labels: rows.map((r) => r.service), datasets: [{ data: rows.map((r) => r.cost), backgroundColor: rows.map((r) => r.color), borderColor: th.surface, borderWidth: 2, borderRadius: 4, hoverOffset: 6 }] },
+    options: {
+      maintainAspectRatio: false, animation: false, cutout: "72%",
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (it) => `${it.label}: ${money(it.parsed)} (${rows[it.dataIndex].share_pct.toFixed(1)}%)` } } },
+    },
+  });
+  S.charts.push(c);
+}
 function chartTheme() {
   Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;  // match the console's type
   return { text: css("--text-secondary"), grid: css("--grid"), series: css("--series-1"), soft: css("--series-1-soft"), critical: css("--critical"), surface: css("--surface-1") };
@@ -227,7 +256,14 @@ function lineChart(canvas, series, anomalies) {
     data: {
       labels: series.map((p) => p.date),
       datasets: [
-        { label: "Daily cost", data: series.map((p) => p.cost), borderColor: th.series, backgroundColor: th.soft, fill: true, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.25 },
+        { label: "Daily cost", data: series.map((p) => p.cost), borderColor: th.series, fill: true,
+          backgroundColor: (ctx) => {  // vertical fade under the line
+            const { chartArea: a, ctx: g } = ctx.chart;
+            if (!a) return th.soft;
+            const grad = g.createLinearGradient(0, a.top, 0, a.bottom);
+            grad.addColorStop(0, th.soft); grad.addColorStop(1, "transparent");
+            return grad;
+          }, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.25 },
         { label: "Anomaly", data: series.map((p) => (flagged.has(p.date) ? p.cost : null)), showLine: false, pointRadius: 5, pointHoverRadius: 7,
           pointBackgroundColor: th.critical, pointBorderColor: th.surface, pointBorderWidth: 2 },
       ],
@@ -247,23 +283,6 @@ function lineChart(canvas, series, anomalies) {
   });
   S.charts.push(c);
 }
-function barChart(canvas, labels, values, { horizontal = true, label = "Cost" } = {}) {
-  if (!window.Chart) return;
-  const th = chartTheme();
-  const c = new Chart(canvas, {
-    type: "bar",
-    data: { labels, datasets: [{ label, data: values, backgroundColor: th.series, borderRadius: 4, borderSkipped: "start", maxBarThickness: 22 }] },
-    options: {
-      indexAxis: horizontal ? "y" : "x", maintainAspectRatio: false, animation: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (it) => money(it.parsed[horizontal ? "x" : "y"]) } } },
-      scales: {
-        x: { ticks: { color: th.text, maxRotation: 0, ...(horizontal ? { callback: (v) => inr0.format(v) } : {}) }, grid: { color: horizontal ? th.grid : "transparent" } },
-        y: { ticks: { color: th.text, ...(horizontal ? {} : { callback: (v) => inr0.format(v) }) }, grid: { color: horizontal ? "transparent" : th.grid } },
-      },
-    },
-  });
-  S.charts.push(c);
-}
 
 /* ---------- dashboard ---------- */
 async function viewDashboard(v) {
@@ -275,9 +294,16 @@ async function viewDashboard(v) {
     api(T("/recommendations?status=open")),
   ]);
   const mom = s.month_over_month;
+  const svc = serviceSlices(s.top_services, s.current.amount);
   const fc = s.forecast;
   const saving = recs.reduce((a, r) => a + r.est_monthly_saving, 0);
+  const who = (S.me.name || S.me.email.split("@")[0]).split(" ")[0];
+  const client = S.me.tenants.find((t) => t.id === S.tenant)?.name || "";
   v.innerHTML = `
+  <div class="welcome">
+    <div class="avatar" aria-hidden="true">${esc(initials(S.me.name || S.me.email))}</div>
+    <div><h2>Welcome, ${esc(who)}</h2><div class="muted small">${esc(client)}${S.tenantInfo?.data_as_of ? ` · data as of ${fmtDate(S.tenantInfo.data_as_of)}` : ""}</div></div>
+  </div>
   <div class="grid cols-4">
     <div class="card stat"><div class="label">${esc(s.current.label)}</div><div class="value">${money(s.current.amount)}</div>
       <div class="sub">${s.current.is_partial ? '<span class="pill tag-partial">Month-to-date · partial</span>' : '<span class="pill">Full month</span>'}</div></div>
@@ -292,8 +318,9 @@ async function viewDashboard(v) {
     <div class="card span-2"><div class="card-head"><h3>Daily cost — last 60 days</h3>
       <span class="muted small">avg ${money(trend.stats.average)} · min ${money(trend.stats.min)} · max ${money(trend.stats.max)} · ${esc(trend.stats.stability || "")}${trend.anomalies.length ? ` · ${trend.anomalies.length} anomal${trend.anomalies.length > 1 ? "ies" : "y"}` : ""}</span></div>
       <div class="chart-box"><canvas id="c-trend" aria-label="Daily cost line chart"></canvas></div></div>
-    <div class="card"><div class="card-head"><h3>Top services — month-to-date</h3></div><div class="chart-box short"><canvas id="c-svc" aria-label="Top services bar chart"></canvas></div>
-      ${table([{ label: "Service", key: "service" }, { label: "Cost", num: 1, get: (r) => money(r.cost) }, { label: "Share", html: (r) => shareCell(r.share_pct) }], s.top_services.slice(0, 6))}</div>
+    <div class="card"><div class="card-head"><h3>Spend by service — month-to-date</h3></div>
+      <div class="donut-box"><canvas id="c-svc" aria-label="Spend by service donut chart"></canvas><div class="donut-center"><span class="muted small">Total</span><b>${money(s.current.amount, 1)}</b></div></div>
+      ${table([{ label: "Service", html: (r) => `<span class="swatch" style="background:${r.color}"></span>${esc(r.service)}` }, { label: "Cost", num: 1, get: (r) => money(r.cost) }, { label: "Share", num: 1, get: (r) => `${r.share_pct.toFixed(1)}%` }], svc)}</div>
     <div class="card"><div class="card-head"><h3>Top resources — month-to-date</h3><a href="#explorer" class="small">Explore →</a></div>
       ${table([{ label: "Resource", html: (r) => `<span title="${esc(r.resource)}">${esc(short(r.resource))}</span>` }, { label: "Cost", num: 1, get: (r) => money(r.cost) }, { label: "Share", html: (r) => shareCell(r.share_pct) }], s.top_resources.slice(0, 8))}</div>
     <div class="card"><div class="card-head"><h3>Open alerts</h3><a href="#alerts" class="small">All alerts →</a></div>
@@ -303,8 +330,7 @@ async function viewDashboard(v) {
       ${table([{ label: "Recommendation", key: "title" }, { label: "Est. saving", num: 1, get: (r) => money(r.est_monthly_saving, 1) }], recs.slice(0, 5), { empty: "No open recommendations" })}</div>
   </div>`;
   lineChart($("#c-trend"), trend.series, trend.anomalies);
-  const top = s.top_services.slice(0, 6);
-  barChart($("#c-svc"), top.map((r) => r.service), top.map((r) => r.cost));
+  donutChart($("#c-svc"), svc);
 }
 
 /* ---------- explorer ---------- */

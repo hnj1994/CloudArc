@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,19 +10,104 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <div id="login" class="login hidden">
-    <div class="login-card">
-      <h1><span class="logo">☁</span> CloudArc</h1>
-      <p class="muted">Cloud cost management &amp; governance</p>
-      <button id="sso-btn" class="btn primary hidden">Sign in with Microsoft</button>
-      <button id="token-toggle" class="link-btn hidden" type="button">Use an API token instead</button>
-      <form id="token-form" class="hidden">
-        <label for="token">API token</label>
-        <input id="token" type="password" autocomplete="off" placeholder="ca_…" required>
-        <button class="btn primary" type="submit">Sign in with token</button>
-      </form>
-      <p id="login-error" class="error"></p>
-    </div>
+  <div id="login" class="landing hidden">
+    <header class="lp-nav">
+      <div class="brand"><span class="logo">☁</span> CloudArc</div>
+      <nav class="lp-links" aria-label="Page">
+        <button type="button" class="link-btn" data-scroll="lp-features">Features</button>
+        <button type="button" class="link-btn" data-scroll="lp-preview">Preview</button>
+      </nav>
+      <button type="button" class="btn primary small" id="lp-signin">Sign in</button>
+    </header>
+
+    <section class="lp-hero">
+      <h1>Master your multi‑cloud spend with clear, governed insight.</h1>
+      <p class="lp-sub">CloudArc brings Azure, AWS and GCP costs, budgets, forecasts and evidence-backed savings into one console for every client you manage.</p>
+      <div class="login-card" id="lp-auth">
+        <button id="sso-btn" class="btn primary hidden">Sign in with Microsoft</button>
+        <button id="token-toggle" class="link-btn hidden" type="button">Use an API token instead</button>
+        <form id="token-form" class="hidden">
+          <label for="token">API token</label>
+          <input id="token" type="password" autocomplete="off" placeholder="ca_…" required>
+          <button class="btn primary" type="submit">Sign in with token</button>
+        </form>
+        <p id="login-error" class="error" role="alert"></p>
+      </div>
+    </section>
+
+    <section class="lp-preview" id="lp-preview" role="img" aria-label="Illustrative preview of the CloudArc dashboard with sample data">
+      <div class="lp-float lp-float-a" aria-hidden="true"></div>
+      <div class="lp-float lp-float-b" aria-hidden="true"></div>
+      <div class="lp-frame">
+        <div class="lp-frame-head">
+          <div class="lp-avatar" aria-hidden="true">SR</div>
+          <div><div class="lp-title">Welcome back</div><div class="lp-meta">Sample Retail Ltd · data as of yesterday</div></div>
+          <span class="pill lp-sample">Sample data</span>
+        </div>
+        <div class="lp-grid">
+          <div class="lp-card lp-overview">
+            <div class="lp-card-head"><span>Monthly overview</span><span class="pill">This month</span></div>
+            <div class="lp-split">
+              <div>
+                <div class="lp-label">Month-to-date</div>
+                <div class="lp-big">₹4,58,780</div>
+                <svg class="lp-area" viewBox="0 0 320 130" aria-hidden="true">
+                  <defs><linearGradient id="lpFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".45"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
+                  <g class="lp-gridlines"><line x1="0" y1="20" x2="320" y2="20"/><line x1="0" y1="60" x2="320" y2="60"/><line x1="0" y1="100" x2="320" y2="100"/></g>
+                  <g class="lp-bars"><rect x="14" y="78" width="10" height="44" rx="3"/><rect x="54" y="70" width="10" height="52" rx="3"/><rect x="94" y="84" width="10" height="38" rx="3"/><rect x="134" y="62" width="10" height="60" rx="3"/><rect x="174" y="40" width="10" height="82" rx="3"/><rect x="214" y="66" width="10" height="56" rx="3"/><rect x="254" y="50" width="10" height="72" rx="3"/><rect x="294" y="44" width="10" height="78" rx="3"/></g>
+                  <path class="lp-fill" d="M0 92 C30 80 50 70 80 74 S130 92 160 64 S200 18 220 40 S260 70 290 46 L320 30 L320 130 L0 130 Z" fill="url(#lpFill)"/>
+                  <path class="lp-line" d="M0 92 C30 80 50 70 80 74 S130 92 160 64 S200 18 220 40 S260 70 290 46 L320 30"/>
+                  <circle class="lp-dot" cx="198" cy="26" r="4"/>
+                </svg>
+              </div>
+              <div class="lp-donut-wrap">
+                <div class="lp-label">Spend by service</div>
+                <svg class="lp-donut" viewBox="0 0 100 100" aria-hidden="true">
+                  <g transform="rotate(-90 50 50)" fill="none" stroke-width="13">
+                    <circle r="38" cx="50" cy="50" stroke="var(--cat-1)" stroke-dasharray="88.7 150" stroke-dashoffset="0"/>
+                    <circle r="38" cx="50" cy="50" stroke="var(--cat-2)" stroke-dasharray="55.3 183.5" stroke-dashoffset="-90.7"/>
+                    <circle r="38" cx="50" cy="50" stroke="var(--cat-3)" stroke-dasharray="41 197.8" stroke-dashoffset="-148"/>
+                    <circle r="38" cx="50" cy="50" stroke="var(--cat-4)" stroke-dasharray="45.8 193" stroke-dashoffset="-191"/>
+                  </g>
+                </svg>
+                <ul class="lp-legend">
+                  <li><i style="background:var(--cat-1)"></i>Compute <b>38%</b></li>
+                  <li><i style="background:var(--cat-2)"></i>Database <b>24%</b></li>
+                  <li><i style="background:var(--cat-3)"></i>Storage <b>18%</b></li>
+                  <li><i style="background:var(--cat-4)"></i>Network <b>20%</b></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          <div class="lp-side">
+            <div class="lp-card">
+              <div class="lp-card-head"><span>Budgets</span></div>
+              <div class="lp-budget"><span>Production</span><b>72%</b><div class="meter"><div class="fill" style="width:72%"></div></div></div>
+              <div class="lp-budget"><span>Disaster recovery</span><b>41%</b><div class="meter"><div class="fill" style="width:41%"></div></div></div>
+              <div class="lp-budget"><span>Analytics</span><b>96%</b><div class="meter"><div class="fill over" style="width:96%"></div></div></div>
+            </div>
+            <div class="lp-card">
+              <div class="lp-card-head"><span>Savings identified</span></div>
+              <div class="lp-big">₹48,200<span class="lp-meta"> / month</span></div>
+              <div class="lp-meta">Right-size 3 VMs · 2 idle disks · 1 reservation</div>
+            </div>
+          </div>
+          <div class="lp-card lp-activity">
+            <div class="lp-card-head"><span>Recent alerts</span></div>
+            <div class="lp-row"><span class="status serious">Forecast</span><span>Analytics forecast to exceed budget by 6%</span><b>₹1,12,400</b></div>
+            <div class="lp-row"><span class="status warning">Anomaly</span><span>Storage spend 2.4× baseline on 14 Sep</span><b>₹18,950</b></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="lp-features" id="lp-features">
+      <div class="lp-feature"><h3>Multi-cloud in one view</h3><p>Azure syncs daily over read-only APIs; AWS CUR and GCP billing exports upload in a click. Every load reconciles to the provider's own total.</p></div>
+      <div class="lp-feature"><h3>Budgets that warn early</h3><p>Forecast and anomaly alerts flag overruns while there is still time to act, not after the invoice lands.</p></div>
+      <div class="lp-feature"><h3>Savings with evidence</h3><p>Right-sizing, idle resources and reservation candidates, each with the utilisation data behind it.</p></div>
+      <div class="lp-feature"><h3>Client-ready reporting</h3><p>The monthly Cost &amp; Governance Report in Word or PDF, with every client's data kept strictly separate.</p></div>
+    </section>
+    <footer class="lp-foot">CloudArc · Cloud cost management &amp; governance</footer>
   </div>
 
   <div id="shell" class="shell hidden">
