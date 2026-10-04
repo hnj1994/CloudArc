@@ -17,6 +17,7 @@ from ..db import Database
 from ..ingest.loader import set_fx_rate
 from ..security import auth
 from ..security.auth import Principal
+from ..security.ratelimit import client_ip
 from .deps import TenantCtx, current_principal, db_dep, platform_admin, tenant_access
 
 router = APIRouter(prefix="/api")
@@ -64,7 +65,7 @@ def me(p: Principal = Depends(current_principal), db: Database = Depends(db_dep)
 
 @router.post("/session")
 def session_start(request: Request, p: Principal = Depends(current_principal), db: Database = Depends(db_dep)):
-    audit.record(db, "login", user_id=p.user_id, ip=request.client.host if request.client else None,
+    audit.record(db, "login", user_id=p.user_id, ip=client_ip(request),
                  detail={"user_agent": request.headers.get("user-agent", "")[:200]})
     return {"ok": True}
 
