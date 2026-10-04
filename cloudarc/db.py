@@ -13,8 +13,9 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 import duckdb
 
@@ -338,7 +339,7 @@ class Database:
         try:
             rel = cur.execute(sql, params or [])
             cols = [d[0] for d in rel.description] if rel.description else []
-            return [dict(zip(cols, row)) for row in rel.fetchall()]
+            return [dict(zip(cols, row, strict=True)) for row in rel.fetchall()]
         finally:
             cur.close()
 

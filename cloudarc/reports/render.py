@@ -125,13 +125,13 @@ def _register_fonts() -> tuple[str, str]:
 
 
 def to_pdf(report: Report, path: Path) -> Path:
+    from xml.sax.saxutils import escape
+
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import inch
-    from reportlab.platypus import (Image, ListFlowable, ListItem, PageBreak, Paragraph, SimpleDocTemplate, Spacer,
-                                    Table, TableStyle)
-    from xml.sax.saxutils import escape
+    from reportlab.platypus import Image, ListFlowable, ListItem, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     regular, bold = _register_fonts()
     ss = getSampleStyleSheet()

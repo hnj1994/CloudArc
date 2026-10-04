@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import date
-from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field

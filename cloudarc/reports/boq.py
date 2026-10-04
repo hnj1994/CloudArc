@@ -79,7 +79,7 @@ def parse_calculator_xlsx(path: str | Path) -> list[dict]:
             if not first or not isinstance(cost, (int, float)):
                 continue
 
-            def get(h: str):
+            def get(h: str, row=row, header_idx=header_idx):
                 i = header_idx.get(h)
                 return row[i] if i is not None and i < len(row) else None
 

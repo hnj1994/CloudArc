@@ -154,11 +154,11 @@ def verify_realized_savings(db: Database, tenant_id: str, as_of: date, settle_da
         if (as_of - impl).days < settle_days:
             continue
 
-        def avg(d0: date, d1: date) -> float:
+        def avg(d0: date, d1: date, resource_id: str = r["resource_id"]) -> float:
             v = db.scalar(
                 "SELECT COALESCE(SUM(cost_base), 0) FROM cost_records WHERE tenant_id = ? AND resource_id = ? "
                 "AND charge_date BETWEEN ? AND ?",
-                [tenant_id, r["resource_id"], d0, d1],
+                [tenant_id, resource_id, d0, d1],
             )
             return float(v) / max((d1 - d0).days + 1, 1)
 

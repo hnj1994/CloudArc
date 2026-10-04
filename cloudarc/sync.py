@@ -12,9 +12,9 @@ import logging
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Callable
 
 from . import alerts, audit, budgets
 from .analytics.costs import anomalies_by

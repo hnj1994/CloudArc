@@ -9,9 +9,9 @@ re-syncing the same period any number of times never duplicates cost
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 from ..config import get_settings
 from ..db import Database, new_id

@@ -71,7 +71,6 @@ class AwsCurAdapter(BillingAdapter):
         product = cols.text("lineItem/ProductCode", "line_item_product_code")
         lt = cols.text("lineItem/LineItemType", "line_item_line_item_type", default="'Usage'")
         usage_type = cols.text("lineItem/UsageType", "line_item_usage_type")
-        term = cols.text("pricing/term", "pricing_term")
         rtype = (
             f"CASE WHEN {rid} LIKE 'arn:%' THEN split_part({rid}, ':', 3) || '/' || "
             f"split_part(split_part({rid}, ':', 6), '/', 1) "

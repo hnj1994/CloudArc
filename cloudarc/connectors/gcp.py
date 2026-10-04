@@ -11,8 +11,8 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Iterator
 from datetime import date
-from typing import Iterator
 
 import httpx
 import jwt
@@ -154,7 +154,7 @@ class GcpClient:
         while True:
             for row in r.get("rows", []):
                 seen += 1
-                yield {name: cell.get("v") for name, cell in zip(fields, row["f"])}
+                yield {name: cell.get("v") for name, cell in zip(fields, row["f"], strict=True)}
             token = r.get("pageToken")
             if not token:
                 break

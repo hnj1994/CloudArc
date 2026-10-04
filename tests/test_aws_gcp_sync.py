@@ -1,6 +1,6 @@
 """AWS (Cost Explorer + CUR in S3) and GCP (BigQuery billing export) connectors and their sync paths."""
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -152,7 +152,7 @@ def test_aws_client_pages_cost_explorer_and_names_accounts():
 
 def test_aws_cur_files_use_latest_delivery_folder_only():
     s3, stub = stubbed("s3")
-    t = lambda h: datetime(2026, 10, 1, h, tzinfo=timezone.utc)  # noqa: E731
+    t = lambda h: datetime(2026, 10, 1, h, tzinfo=UTC)  # noqa: E731
     stub.add_response("list_objects_v2", {"IsTruncated": True, "NextContinuationToken": "c2", "Contents": [
         {"Key": "cur/cloudarc/data/BILLING_PERIOD=2026-09/v1/part-0.parquet", "LastModified": t(1)},
         {"Key": "cur/cloudarc/data/BILLING_PERIOD=2026-08/part-0.parquet", "LastModified": t(9)},

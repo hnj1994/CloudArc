@@ -204,7 +204,7 @@ def _tenant_b(db: Database, out: Path, as_of: date, rng: random.Random) -> str:
         region_rg = rg_dr if name.startswith("hp-asr") or name == "hp-rsv-dr" else rg_prod
         ids[name] = (_rid(sub, region_rg, prov, typ, name), region_rg)
     for d in _days(date(as_of.year, 5, 1), as_of):
-        for name, rtype, cat, sub_cat, meter, region, unit, qty, monthly, pricing in B_COMPONENTS:
+        for name, _rtype, cat, sub_cat, meter, region, unit, qty, monthly, pricing in B_COMPONENTS:
             rid, rg = ids[name]
             cost = _monthly_to_daily(monthly, d, rng, 0.03)
             t = tags if name != "hparchivestore" else {"Environment": "Production"}
@@ -217,7 +217,7 @@ def _tenant_b(db: Database, out: Path, as_of: date, rng: random.Random) -> str:
     db.execute("UPDATE cloud_accounts SET permission_status = 'ok', last_sync_status = 'succeeded', last_sync_at = now() WHERE id = ?", [account])
 
     inv = []
-    for name, rtype, cat, sub_cat, meter, region, *_ in B_COMPONENTS:
+    for name, rtype, _cat, _sub_cat, meter, region, *_ in B_COMPONENTS:
         rid, rg = ids[name]
         if any(i["id"] == rid for i in inv):
             continue

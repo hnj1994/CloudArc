@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from .db import Database
 
@@ -44,7 +44,7 @@ def _norm(r: dict) -> dict:
 
 def upsert_resources(db: Database, tenant_id: str, account_id: str, items: list[dict], full_snapshot: bool = True) -> dict:
     """Merge a Resource Graph snapshot; records added / removed / resized changes."""
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     existing = {
         r["resource_id"]: r
         for r in db.query(

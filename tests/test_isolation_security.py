@@ -3,6 +3,7 @@ import logging
 import re
 
 import pytest
+from cryptography.exceptions import InvalidTag
 
 from cloudarc import tenants
 from cloudarc.security.secrets import RedactingFilter, SecretBox
@@ -77,7 +78,7 @@ def test_secretbox_roundtrip_and_tamper_detection():
     token = box.seal("s3cr3t-value", aad="cred:t:1")
     assert "s3cr3t" not in token
     assert box.open(token, aad="cred:t:1") == "s3cr3t-value"
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidTag):
         box.open(token, aad="cred:OTHER:1")  # ciphertext is bound to its tenant/credential
 
 
