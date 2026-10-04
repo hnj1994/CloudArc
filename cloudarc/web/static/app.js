@@ -66,8 +66,12 @@ async function boot() {
   applyTheme(localStorageGet("cloudarc.theme"));
   try { S.config = await (await fetch("/api/config")).json(); } catch (_) { S.config = {}; }
   if (S.config.auth_mode === "entra" && S.config.entra_client_id) {
+    // SSO is the sign-in; token sign-in (automation, break-glass) stays one click away.
     $("#sso-btn").classList.remove("hidden");
+    $("#token-toggle").classList.remove("hidden");
     try { await initMsal(); if (await refreshSsoToken()) { await start(); return; } } catch (_) { /* fall through to login */ }
+  } else {
+    $("#token-form").classList.remove("hidden");
   }
   S.token = sessionStorageGet("cloudarc.token");
   if (S.token) { try { await start(); return; } catch (_) { S.token = null; } }
@@ -84,6 +88,19 @@ function logout() {
   if (S.msal) { const acct = S.msal.getActiveAccount(); S.msal.clearCache?.({ account: acct }); }
   showLogin();
 }
+
+$$("[data-scroll]").forEach((b) => b.addEventListener("click", () => $(`#${b.dataset.scroll}`).scrollIntoView({ behavior: "smooth", block: "start" })));
+$("#lp-signin").addEventListener("click", () => {
+  $("#lp-auth").scrollIntoView({ behavior: "smooth", block: "center" });
+  const target = !$("#sso-btn").classList.contains("hidden") ? $("#sso-btn") : $("#token");
+  target.focus({ preventScroll: true });
+});
+
+$("#token-toggle").addEventListener("click", () => {
+  $("#token-toggle").classList.add("hidden");
+  $("#token-form").classList.remove("hidden");
+  $("#token").focus();
+});
 
 $("#token-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -154,11 +171,11 @@ $("#tenant-select").addEventListener("change", async (e) => { S.tenant = e.targe
 $("#logout-btn").addEventListener("click", logout);
 $("#menu-btn").addEventListener("click", () => $(".sidebar").classList.toggle("open"));
 $("#theme-btn").addEventListener("click", () => {
-  const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const cur = document.documentElement.dataset.theme || "dark";
   const next = cur === "dark" ? "light" : "dark";
   applyTheme(next); localStorageSet("cloudarc.theme", next); route();
 });
-function applyTheme(t) { if (t === "dark" || t === "light") document.documentElement.dataset.theme = t; }
+function applyTheme(t) { document.documentElement.dataset.theme = t === "light" ? "light" : "dark"; }  // dark by default
 
 async function loadTenant() {
   if (!S.tenant) { S.tenantInfo = null; $("#as-of").textContent = ""; return; }
@@ -204,7 +221,30 @@ function exportButtons(path, name) {
 }
 function wireDownloads(root) { $$("[data-dl]", root).forEach((b) => b.addEventListener("click", () => download(b.dataset.dl, b.dataset.name))); }
 
+function initials(n) { return n.replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join(""); }
+/* Top 4 services keep fixed categorical slots (validated set); the rest fold into a neutral "Other". */
+function serviceSlices(top, total) {
+  const cat = [1, 2, 3, 4].map((i) => css(`--cat-${i}`));
+  const rows = top.slice(0, 4).map((r, i) => ({ ...r, color: cat[i] }));
+  const rest = total - rows.reduce((a, r) => a + r.cost, 0);
+  if (rest > 0.005 * total) rows.push({ service: "Other", cost: rest, share_pct: (100 * rest) / total, color: css("--cat-other") });
+  return rows;
+}
+function donutChart(canvas, rows) {
+  if (!window.Chart || !rows.length) return;
+  const th = chartTheme();
+  const c = new Chart(canvas, {
+    type: "doughnut",
+    data: { labels: rows.map((r) => r.service), datasets: [{ data: rows.map((r) => r.cost), backgroundColor: rows.map((r) => r.color), borderColor: th.surface, borderWidth: 2, borderRadius: 4, hoverOffset: 6 }] },
+    options: {
+      maintainAspectRatio: false, animation: false, cutout: "72%",
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (it) => `${it.label}: ${money(it.parsed)} (${rows[it.dataIndex].share_pct.toFixed(1)}%)` } } },
+    },
+  });
+  S.charts.push(c);
+}
 function chartTheme() {
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;  // match the console's type
   return { text: css("--text-secondary"), grid: css("--grid"), series: css("--series-1"), soft: css("--series-1-soft"), critical: css("--critical"), surface: css("--surface-1") };
 }
 function lineChart(canvas, series, anomalies) {
@@ -216,7 +256,14 @@ function lineChart(canvas, series, anomalies) {
     data: {
       labels: series.map((p) => p.date),
       datasets: [
-        { label: "Daily cost", data: series.map((p) => p.cost), borderColor: th.series, backgroundColor: th.soft, fill: true, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.25 },
+        { label: "Daily cost", data: series.map((p) => p.cost), borderColor: th.series, fill: true,
+          backgroundColor: (ctx) => {  // vertical fade under the line
+            const { chartArea: a, ctx: g } = ctx.chart;
+            if (!a) return th.soft;
+            const grad = g.createLinearGradient(0, a.top, 0, a.bottom);
+            grad.addColorStop(0, th.soft); grad.addColorStop(1, "transparent");
+            return grad;
+          }, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.25 },
         { label: "Anomaly", data: series.map((p) => (flagged.has(p.date) ? p.cost : null)), showLine: false, pointRadius: 5, pointHoverRadius: 7,
           pointBackgroundColor: th.critical, pointBorderColor: th.surface, pointBorderWidth: 2 },
       ],
@@ -236,23 +283,6 @@ function lineChart(canvas, series, anomalies) {
   });
   S.charts.push(c);
 }
-function barChart(canvas, labels, values, { horizontal = true, label = "Cost" } = {}) {
-  if (!window.Chart) return;
-  const th = chartTheme();
-  const c = new Chart(canvas, {
-    type: "bar",
-    data: { labels, datasets: [{ label, data: values, backgroundColor: th.series, borderRadius: 4, borderSkipped: "start", maxBarThickness: 22 }] },
-    options: {
-      indexAxis: horizontal ? "y" : "x", maintainAspectRatio: false, animation: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (it) => money(it.parsed[horizontal ? "x" : "y"]) } } },
-      scales: {
-        x: { ticks: { color: th.text, maxRotation: 0, ...(horizontal ? { callback: (v) => inr0.format(v) } : {}) }, grid: { color: horizontal ? th.grid : "transparent" } },
-        y: { ticks: { color: th.text, ...(horizontal ? {} : { callback: (v) => inr0.format(v) }) }, grid: { color: horizontal ? "transparent" : th.grid } },
-      },
-    },
-  });
-  S.charts.push(c);
-}
 
 /* ---------- dashboard ---------- */
 async function viewDashboard(v) {
@@ -264,9 +294,16 @@ async function viewDashboard(v) {
     api(T("/recommendations?status=open")),
   ]);
   const mom = s.month_over_month;
+  const svc = serviceSlices(s.top_services, s.current.amount);
   const fc = s.forecast;
   const saving = recs.reduce((a, r) => a + r.est_monthly_saving, 0);
+  const who = (S.me.name || S.me.email.split("@")[0]).split(" ")[0];
+  const client = S.me.tenants.find((t) => t.id === S.tenant)?.name || "";
   v.innerHTML = `
+  <div class="welcome">
+    <div class="avatar" aria-hidden="true">${esc(initials(S.me.name || S.me.email))}</div>
+    <div><h2>Welcome, ${esc(who)}</h2><div class="muted small">${esc(client)}${S.tenantInfo?.data_as_of ? ` · data as of ${fmtDate(S.tenantInfo.data_as_of)}` : ""}</div></div>
+  </div>
   <div class="grid cols-4">
     <div class="card stat"><div class="label">${esc(s.current.label)}</div><div class="value">${money(s.current.amount)}</div>
       <div class="sub">${s.current.is_partial ? '<span class="pill tag-partial">Month-to-date · partial</span>' : '<span class="pill">Full month</span>'}</div></div>
@@ -281,8 +318,9 @@ async function viewDashboard(v) {
     <div class="card span-2"><div class="card-head"><h3>Daily cost — last 60 days</h3>
       <span class="muted small">avg ${money(trend.stats.average)} · min ${money(trend.stats.min)} · max ${money(trend.stats.max)} · ${esc(trend.stats.stability || "")}${trend.anomalies.length ? ` · ${trend.anomalies.length} anomal${trend.anomalies.length > 1 ? "ies" : "y"}` : ""}</span></div>
       <div class="chart-box"><canvas id="c-trend" aria-label="Daily cost line chart"></canvas></div></div>
-    <div class="card"><div class="card-head"><h3>Top services — month-to-date</h3></div><div class="chart-box short"><canvas id="c-svc" aria-label="Top services bar chart"></canvas></div>
-      ${table([{ label: "Service", key: "service" }, { label: "Cost", num: 1, get: (r) => money(r.cost) }, { label: "Share", html: (r) => shareCell(r.share_pct) }], s.top_services.slice(0, 6))}</div>
+    <div class="card"><div class="card-head"><h3>Spend by service — month-to-date</h3></div>
+      <div class="donut-box"><canvas id="c-svc" aria-label="Spend by service donut chart"></canvas><div class="donut-center"><span class="muted small">Total</span><b>${money(s.current.amount, 1)}</b></div></div>
+      ${table([{ label: "Service", html: (r) => `<span class="swatch" style="background:${r.color}"></span>${esc(r.service)}` }, { label: "Cost", num: 1, get: (r) => money(r.cost) }, { label: "Share", num: 1, get: (r) => `${r.share_pct.toFixed(1)}%` }], svc)}</div>
     <div class="card"><div class="card-head"><h3>Top resources — month-to-date</h3><a href="#explorer" class="small">Explore →</a></div>
       ${table([{ label: "Resource", html: (r) => `<span title="${esc(r.resource)}">${esc(short(r.resource))}</span>` }, { label: "Cost", num: 1, get: (r) => money(r.cost) }, { label: "Share", html: (r) => shareCell(r.share_pct) }], s.top_resources.slice(0, 8))}</div>
     <div class="card"><div class="card-head"><h3>Open alerts</h3><a href="#alerts" class="small">All alerts →</a></div>
@@ -292,8 +330,7 @@ async function viewDashboard(v) {
       ${table([{ label: "Recommendation", key: "title" }, { label: "Est. saving", num: 1, get: (r) => money(r.est_monthly_saving, 1) }], recs.slice(0, 5), { empty: "No open recommendations" })}</div>
   </div>`;
   lineChart($("#c-trend"), trend.series, trend.anomalies);
-  const top = s.top_services.slice(0, 6);
-  barChart($("#c-svc"), top.map((r) => r.service), top.map((r) => r.cost));
+  donutChart($("#c-svc"), svc);
 }
 
 /* ---------- explorer ---------- */
@@ -620,11 +657,14 @@ async function viewAccounts(v) {
   <div class="card"><h3>Integration health</h3>
     ${table([{ label: "Account", html: (a) => `${esc(a.name || a.external_id)}<div class="small muted mono">${esc(a.external_id)}</div>` }, { label: "Provider", get: (a) => a.provider.toUpperCase() },
       { label: "Permissions", html: (a) => permStatus(a.permission_status) }, { label: "Last sync", html: (a) => `${a.last_sync_status === "failed" ? '<span class="status critical">failed</span>' : a.last_sync_status ? `<span class="status good">${esc(a.last_sync_status)}</span>` : "—"}<div class="small muted">${fmtTs(a.last_sync_at)}${a.last_sync_duration_s ? ` · ${a.last_sync_duration_s.toFixed(0)} s` : ""}</div>${a.last_error ? `<div class="small error">${esc(a.last_error)}</div>` : ""}` },
-      { label: "Source", get: (a) => (a.credential_id ? "API (daily)" : "File uploads") },
+      { label: "Source", get: (a) => (a.credential_id ? { aws: "Cost Explorer / CUR (daily)", gcp: "BigQuery export (daily)" }[a.provider] || "API (daily)" : "File uploads") },
       { label: "", html: (a) => (canWrite() && a.credential_id ? `<button class="btn small" data-sync="${esc(a.id)}">Sync now</button>` : "") }], accounts, { empty: "No accounts connected" })}</div>
   ${isTenantAdmin() ? `<div class="card" style="margin-top:14px"><h3>Connect an Azure subscription</h3>
     <div class="steps">${["Prerequisites", "Credentials", "Select subscriptions", "Done"].map((s, i) => `<span class="${i === WIZ.step ? "on" : ""}">${i + 1}. ${s}</span>`).join("")}</div>
-    <div id="wiz"></div></div>` : ""}
+    <div id="wiz"></div></div>
+  <div class="card" style="margin-top:14px"><div class="card-head"><h3>Connect AWS or GCP</h3>
+    <div class="seg" role="tablist"><button class="btn small ${CX.tab === "aws" ? "on" : ""}" data-cx="aws" role="tab">AWS</button><button class="btn small ${CX.tab === "gcp" ? "on" : ""}" data-cx="gcp" role="tab">GCP</button></div></div>
+    <div id="cx"></div></div>` : ""}
   <div class="grid cols-2" style="margin-top:14px">
     <div class="card"><h3>Upload a billing export</h3><p class="muted small">Azure cost details / exports (CSV), AWS CUR or CUR 2.0 (CSV/Parquet), GCP billing export. Re-uploading a period replaces it — no duplicates.</p>
       ${canWrite() ? `<div class="toolbar"><input type="file" id="up-file" accept=".csv,.gz,.parquet"><select id="up-provider"><option value="">Auto-detect</option><option value="azure">Azure</option><option value="aws">AWS CUR</option><option value="gcp">GCP</option></select><button class="btn primary" id="up-go">Upload</button></div><div id="up-out"></div>` : '<p class="muted">Analyst role required.</p>'}</div>
@@ -632,12 +672,14 @@ async function viewAccounts(v) {
     <div class="card span-2"><h3>Ingestion runs &amp; reconciliation</h3>${table([{ label: "When", get: (r) => fmtTs(r.started_at) }, { label: "Source", key: "source" }, { label: "Provider", key: "provider" }, { label: "Status", key: "status" },
       { label: "Rows", num: 1, get: (r) => (r.rows_loaded ?? "—").toLocaleString("en-IN") }, { label: "Period", get: (r) => `${fmtDate(r.date_from)} – ${fmtDate(r.date_to)}` },
       { label: "Source total", num: 1, get: (r) => (r.source_total == null ? "—" : r.source_total.toFixed(2)) }, { label: "Loaded total", num: 1, get: (r) => (r.loaded_total == null ? "—" : r.loaded_total.toFixed(2)) }], runs.slice(0, 15), { empty: "No ingestions" })}</div>
-    ${isTenantAdmin() ? `<div class="card span-2"><h3>Stored credentials</h3>${table([{ label: "Client ID", key: "client_id" }, { label: "Directory", key: "directory_id" }, { label: "Secret", key: "secret_hint" }, { label: "Rotated", get: (c) => fmtTs(c.rotated_at) },
+    ${isTenantAdmin() ? `<div class="card span-2"><h3>Stored credentials</h3>${table([{ label: "Provider", get: (c) => c.provider.toUpperCase() }, { label: "Identity", key: "client_id" }, { label: "Directory", key: "directory_id" }, { label: "Secret", key: "secret_hint" }, { label: "Rotated", get: (c) => fmtTs(c.rotated_at) },
       { label: "", html: (c) => `<button class="btn small" data-rot="${esc(c.id)}">Rotate secret</button>` }], creds, { empty: "No credentials stored" })}</div>` : ""}
   </div>`;
   $$("[data-sync]", v).forEach((b) => b.addEventListener("click", async () => { try { await api(T(`/accounts/${b.dataset.sync}/sync`), { method: "POST" }); toast("Sync queued — runs within a minute"); } catch (e) { toast(e.message); } }));
   $$("[data-rot]", v).forEach((b) => b.addEventListener("click", async () => {
-    const secret = prompt("New client secret (validated with Entra ID before it replaces the old one)"); if (!secret) return;
+    const provider = creds.find((c) => c.id === b.dataset.rot)?.provider;
+    const what = { aws: "New secret access key for the same access key ID", gcp: "New JSON key for the same service account (paste the whole file)" }[provider] || "New client secret";
+    const secret = prompt(`${what} — it is validated before it replaces the old one`); if (!secret) return;
     try { await api(T(`/credentials/${b.dataset.rot}/rotate`), { method: "POST", body: { secret } }); toast("Secret rotated"); route(); } catch (e) { toast(e.message); }
   }));
   $("#up-go")?.addEventListener("click", async () => {
@@ -650,7 +692,54 @@ async function viewAccounts(v) {
       await loadTenant();
     } catch (e) { $("#up-out").innerHTML = `<div class="callout">${esc(e.message)}</div>`; }
   });
-  if (isTenantAdmin()) renderWizard(req);
+  if (isTenantAdmin()) { renderWizard(req); renderCloudConnect(); }
+}
+
+/* AWS (Cost Explorer + optional CUR in S3) and GCP (BigQuery billing export) connections. */
+const CX = { tab: "aws" };
+function renderCloudConnect() {
+  const box = $("#cx"); if (!box) return;
+  $$("[data-cx]").forEach((b) => b.addEventListener("click", () => { CX.tab = b.dataset.cx; route(); }));
+  const field = (id, label, attrs = "") => `<label>${label}<input id="${id}" ${attrs}></label>`;
+  if (CX.tab === "aws") {
+    box.innerHTML = `<p class="muted small">Read-only IAM user created by <code>deploy/aws/setup-cloudarc-reader.ps1</code> (or <code>.sh</code>). Cost Explorer backfills about 12 months on the first sync (AWS bills $0.01 per request; a daily sync makes a handful). Add the CUR 2.0 bucket for resource-level detail.</p>
+      <div class="form-grid">${field("aws-key", "Access key ID", 'autocomplete="off" spellcheck="false" placeholder="AKIA…"')}${field("aws-secret", "Secret access key", 'type="password" autocomplete="off"')}
+      ${field("aws-role", "Role ARN to assume (optional)", 'placeholder="arn:aws:iam::123456789012:role/…"')}${field("aws-ext", "External ID (optional)")}
+      ${field("aws-bucket", "CUR 2.0 bucket (optional)", 'placeholder="my-billing-exports"')}${field("aws-prefix", "CUR prefix (optional)", 'placeholder="cur/cloudarc"')}
+      ${field("aws-name", "Display name (optional)")}</div>`;
+  } else {
+    box.innerHTML = `<p class="muted small">Service account created by <code>deploy/gcp/setup-cloudarc-reader.sh</code>: BigQuery Data Viewer on the billing export dataset and BigQuery Job User. Google has no billing cost API, so CloudArc reads the export table daily; history starts the day the export was enabled.</p>
+      <div class="form-grid">${field("gcp-table", "Export table", 'spellcheck="false" placeholder="project.dataset.gcp_billing_export_resource_v1_XXXXXX_XXXXXX_XXXXXX"')}
+      ${field("gcp-proj", "Query project (optional)", 'placeholder="defaults to the table\'s project"')}${field("gcp-name", "Display name (optional)")}
+      <label>Service account key (JSON file)<input id="gcp-keyfile" type="file" accept=".json,application/json"></label></div>`;
+  }
+  box.insertAdjacentHTML("beforeend", `<div class="toolbar" style="margin-top:12px"><button class="btn" id="cx-val">Validate</button><button class="btn primary" id="cx-go">Connect &amp; start sync</button></div>
+    <p class="muted small">Secrets are sent once over TLS, encrypted at rest and never displayed again.</p><div id="cx-out"></div>`);
+  const body = async () => {
+    if (CX.tab === "aws") {
+      const opt = (id) => $(id).value.trim() || null;
+      return { access_key_id: $("#aws-key").value.trim(), secret_access_key: $("#aws-secret").value, role_arn: opt("#aws-role"), external_id: opt("#aws-ext"),
+        cur_bucket: opt("#aws-bucket"), cur_prefix: opt("#aws-prefix"), name: opt("#aws-name") };
+    }
+    const f = $("#gcp-keyfile").files[0]; if (!f) throw new Error("Choose the service account JSON key file");
+    return { service_account_key: await f.text(), table: $("#gcp-table").value.trim(), job_project: $("#gcp-proj").value.trim() || null, name: $("#gcp-name").value.trim() || null };
+  };
+  const show = (r) => {
+    const checks = Object.entries(r.permissions.checks).map(([k, v]) => `<div><span class="status ${v === "ok" ? "good" : "critical"}">${esc(k)}</span> ${v === "ok" ? "" : `<span class="small muted">${esc(v)} — needs ${esc(r.permissions.required[k] || "")}</span>`}</div>`).join("");
+    const who = CX.tab === "aws" ? `AWS account <span class="mono">${esc(r.aws_account || r.account_id)}</span>` : `Billing account <span class="mono">${esc(r.billing_account || "—")}</span> as <span class="mono">${esc(r.client_email || "")}</span>`;
+    return `<div class="callout ${r.permissions.status === "ok" ? "ok" : ""}">${who}${checks}</div>`;
+  };
+  const run = async (connect) => {
+    const out = $("#cx-out");
+    out.innerHTML = '<div class="empty">Checking…</div>';
+    try {
+      const r = await api(T(`/connect/${CX.tab}${connect ? "" : "/validate"}`), { method: "POST", body: await body() });
+      out.innerHTML = show(r) + (connect ? '<div class="callout ok">Connected. The first sync is queued and backfills history; costs appear when it completes.</div>' : "");
+      if (connect) $$("#cx input").forEach((i) => { i.value = ""; });
+    } catch (e) { out.innerHTML = `<div class="callout">${esc(e.message)}</div>`; }
+  };
+  $("#cx-val").addEventListener("click", () => run(false));
+  $("#cx-go").addEventListener("click", () => run(true));
 }
 function renderWizard(req) {
   const w = $("#wiz"); if (!w) return;

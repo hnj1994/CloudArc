@@ -21,20 +21,52 @@ Each cloud account belongs to a **client** (tenant) in CloudArc. Create the clie
 3. **Connect the subscription.** In CloudArc, select the client, then go to **Accounts & data › Connect an Azure subscription**. Enter the tenant ID, app ID and password; the password is encrypted and never shown again. Select **Validate**, tick the subscription, then **Enable & start sync**.
 4. **Wait for the first sync.** It starts within about a minute and backfills 3 months. Progress shows in the integration health table on the same page.
 
-## AWS: Cost and Usage Report upload
+## AWS: API connection with daily sync
 
-CloudArc reads AWS cost from CUR files. There is no AWS API connector yet.
+CloudArc reads AWS cost with a read-only IAM identity from two sources:
 
-1. **Create a data export.** In the AWS Billing console, open **Data Exports › Create › Standard data export (CUR 2.0)**. Choose daily granularity, include resource IDs, use CSV (gzip) format, and write to an S3 bucket. The first delivery can take up to 24 hours. AWS can backfill earlier months through a support request.
-2. **Download the files** from S3 at `…/data/BILLING_PERIOD=YYYY-MM/*.csv.gz`.
-3. **Upload** them in CloudArc under **Accounts & data › Upload a billing export**. The provider is detected automatically. Re-uploading a month replaces it, so monthly re-uploads never duplicate cost.
+| Source | What it gives | Needs |
+|---|---|---|
+| **Cost Explorer API** | Daily amortized cost by linked account and service. About 12 months of history on the first sync. | IAM permissions only. AWS bills $0.01 per request; a daily sync makes a handful. |
+| **CUR 2.0 files in S3** (optional) | Every line item, with resource IDs and tags, for resource-level views and recommendations. | A Data Export delivering to S3. |
 
-Costs are loaded amortized: RI and Savings Plan usage shows its effective cost. USD is converted to INR using `CLOUDARC_FX_DEFAULTS`, or dated rates loaded through `POST /api/fx-rates`.
+For each billing month, CloudArc uses the CUR files when they exist and Cost Explorer otherwise. Every load replaces the days it covers, so switching sources never double-counts.
 
-## GCP: Cloud Billing export upload
+1. **Create the read-only identity.** Sign in to the **management (payer) account**, so Cost Explorer covers every linked account. Then run, in PowerShell with the AWS CLI or in AWS CloudShell:
+   ```powershell
+   .\deploy\aws\setup-cloudarc-reader.ps1                                   # Cost Explorer only
+   .\deploy\aws\setup-cloudarc-reader.ps1 -CurBucket my-billing-exports -CurPrefix cur   # plus CUR files
+   ```
+   It creates the IAM user `cloudarc-reader`. Its policy allows only `ce:GetCostAndUsage`, `ce:GetDimensionValues` and, with a bucket, listing and reading that bucket's export files. It then prints an access key. The secret is shown once: paste it into CloudArc only. `setup-cloudarc-reader.sh` is the bash equivalent.
+2. **Optional: CUR 2.0 export.** In **Billing and Cost Management › Data Exports › Create**:
+   - Choose **Standard data export, CUR 2.0**.
+   - Tick **include resource IDs**.
+   - Set **daily** granularity and **Parquet** (or CSV gzip) format.
+   - Choose **Overwrite existing data export file**.
+   - Write to the bucket and prefix you gave the script.
+   
+   The first delivery can take up to 24 hours. Until then CloudArc uses Cost Explorer.
+3. **Connect.** In CloudArc, go to **Accounts & data › Connect AWS or GCP › AWS**. Enter the access key, the secret, and the bucket and prefix if you have them. Select **Validate**, then **Connect & start sync**.
 
-1. **Enable the BigQuery export.** In Cloud Billing, open **Billing export › BigQuery export** and enable *Detailed usage cost*, or at least *Standard usage cost*. Data accumulates from the day you enable it.
-2. **Run the flattening query.** Open `deploy/gcp/billing-export-for-cloudarc.sql` in the BigQuery console, set your export table name, and run it. The query flattens labels and credits, which BigQuery cannot export as CSV otherwise.
-3. **Save the results as CSV** (use `EXPORT DATA` to Cloud Storage for large months) and upload the file in CloudArc under **Accounts & data › Upload a billing export**.
+If Cost Explorer has never been opened in the account, open it once in the console; AWS takes up to 24 hours to enable it. To use a role in another account instead, give its ARN (and external ID, if set) in the form. CloudArc then assumes it for every sync.
 
-Net cost is cost plus credits, which matches the Cloud Billing console's "cost after credits" figure.
+## GCP: API connection with daily sync
+
+Google has no API that returns billing cost; the **BigQuery billing export** is the source. CloudArc queries the export table daily through the BigQuery API with a read-only service account. You don't need to export or upload anything.
+
+1. **Enable the export.** In Cloud Billing, open **Billing export › BigQuery export** and enable **Detailed usage cost**, which gives resource-level detail (Standard also works). Data accumulates from the day you enable it, so do this first.
+2. **Create the read-only service account.** In Cloud Shell:
+   ```bash
+   PROJECT=my-billing-project DATASET=billing_export ./deploy/gcp/setup-cloudarc-reader.sh
+   ```
+   It grants only **BigQuery Data Viewer** on that dataset and **BigQuery Job User** on the project. It creates a JSON key and lists the export table names.
+3. **Connect.** In CloudArc, go to **Accounts & data › Connect AWS or GCP › GCP**. Enter the export table, for example `my-billing-project.billing_export.gcp_billing_export_resource_v1_XXXXXX_XXXXXX_XXXXXX`, and choose the key file. Select **Validate**, then **Connect & start sync**. Afterwards, delete the key file from Cloud Shell.
+
+Net cost is cost plus credits, which matches the Cloud Billing console's "cost after credits". Charges with no project, such as Support, appear under the billing account itself. Queries filter on the table's partitions, so each daily sync scans only recent data.
+
+## Without API access: file uploads
+
+AWS CUR files (CSV, CSV gzip or Parquet) and GCP exports can still be uploaded under **Accounts & data › Upload a billing export**:
+- For GCP, run `deploy/gcp/billing-export-for-cloudarc.sql` in BigQuery and save the result as CSV.
+- Re-uploading a month replaces it.
+- USD costs are converted to INR with `CLOUDARC_FX_DEFAULTS`, or with dated rates loaded through `POST /api/fx-rates`.

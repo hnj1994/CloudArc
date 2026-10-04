@@ -27,7 +27,7 @@ class SecretBox:
         self._aead = AESGCM(key)
 
     @classmethod
-    def from_settings(cls) -> "SecretBox":
+    def from_settings(cls) -> SecretBox:
         raw = get_settings().master_key
         if not raw:
             key_file = get_settings().data_dir / "master.key"

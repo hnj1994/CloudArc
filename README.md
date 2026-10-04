@@ -16,8 +16,8 @@ One deployment serves every client, with strict data isolation between them.
 | Capability | Status |
 |---|---|
 | Azure (Cost Details API, Resource Graph, Monitor, Advisor, Retail Prices) | ✅ Phase 1 |
-| AWS Cost and Usage Report (legacy CUR and CUR 2.0, amortized) | ✅ file ingestion |
-| GCP Cloud Billing export (net of credits) | ✅ file ingestion |
+| AWS Cost Explorer API and CUR 2.0 from S3 (amortized), daily sync | ✅ API |
+| GCP Cloud Billing export via the BigQuery API (net of credits), daily sync | ✅ API |
 | Dashboards, drill-down, unit economics, tag coverage | ✅ |
 | Budgets (tenant / account / RG / service / tag / cost-center scope), calibration, forecast alerts, anomaly alerts | ✅ |
 | Recommendations: VM right-sizing, B→D series, RI candidates, idle/orphaned resources, SQL tier, disk tier, Advisor merge, lifecycle and realized-savings tracking | ✅ |
@@ -31,7 +31,7 @@ One deployment serves every client, with strict data isolation between them.
 make dev                  # venv + dependencies
 make demo                 # synthetic demo tenants; prints API tokens (also saved to data/demo/demo_tokens.json)
 make run                  # http://localhost:8080 — sign in with a printed token
-make test                 # 49 tests, including the tenant-isolation suite
+make test                 # the full suite, including tenant isolation
 ```
 
 The demo loads three synthetic clients:

@@ -10,6 +10,7 @@ from ..analytics.filters import Scope
 from ..config import get_settings
 from ..db import Database, get_db
 from ..security.auth import AuthError, Principal, looks_like_jwt, principal_from_api_token, principal_from_entra_jwt
+from ..security.ratelimit import client_ip
 
 
 def db_dep() -> Database:
@@ -56,7 +57,7 @@ def tenant_access(min_role: str = "viewer"):
             raise HTTPException(404, "tenant not found")
         if not p.can(tenant_id, min_role):
             raise HTTPException(403, f"{min_role} role required for this tenant")
-        return TenantCtx(tenant_id, p, role, request.client.host if request.client else None)
+        return TenantCtx(tenant_id, p, role, client_ip(request))
 
     return dep
 

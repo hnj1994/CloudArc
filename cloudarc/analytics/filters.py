@@ -65,7 +65,7 @@ class Scope:
     providers: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)  # key -> value ("" means "tag missing")
 
-    def replace(self, **kw) -> "Scope":
+    def replace(self, **kw) -> Scope:
         data = {**self.__dict__, **kw}
         return Scope(**data)
 

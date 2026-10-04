@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
@@ -19,10 +20,18 @@ from ..db import Database, get_db, set_db
 from ..ingest.loader import IngestError
 from ..logging_setup import configure
 from ..recommendations.engine import LifecycleError
+from ..security.ratelimit import CLOUD_CHECK_SUFFIXES, Limits, client_ip
 from ..tenants import NotFound
 from . import admin, routes
 
 log = logging.getLogger("cloudarc.api")
+SITE_VERIFICATION = re.compile(r"[A-Za-z0-9_-]{10,100}")  # Search Console token alphabet; anything else is refused
+# Scripts: our own plus Chart.js from cdnjs. Entra sign-in (MSAL) talks to login.microsoftonline.com
+# via fetch and a hidden iframe for silent renewal. Inline style attributes are used for bar widths.
+CSP = ("default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; "
+       "img-src 'self' data:; font-src 'self'; connect-src 'self' https://login.microsoftonline.com; "
+       "frame-src https://login.microsoftonline.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; "
+       "object-src 'none'")
 STATIC = Path(__file__).resolve().parent.parent / "web" / "static"
 
 
@@ -48,20 +57,45 @@ def create_app(db: Database | None = None, start_scheduler: bool | None = None) 
         yield
         if scheduler:
             scheduler.stop()
+        get_db().checkpoint()  # leave nothing in the WAL on a clean shutdown
 
     app = FastAPI(title="CloudArc", version=__version__, lifespan=lifespan,
                   description="Multi-tenant cloud cost management & governance API")
+
+    limits = app.state.limits = Limits()
 
     @app.middleware("http")
     async def observe(request: Request, call_next):
         rid = request.headers.get("X-Request-Id") or uuid.uuid4().hex[:12]
         t0 = time.perf_counter()
+        path = request.url.path
+        ip = client_ip(request) or "unknown"
+        if path.startswith("/api/"):
+            checks = []
+            if request.method == "POST" and path.endswith(CLOUD_CHECK_SUFFIXES):
+                checks.append(("cloud credential checks", limits.cloud_checks))
+            checks += [("failed sign-ins", limits.auth_failures), ("requests", limits.api)]
+            for what, window in checks:
+                wait = window.retry_after(ip)
+                if wait:
+                    log.warning("rate limited", extra={"request_id": rid, "path": path, "limit": what})
+                    return JSONResponse({"detail": f"too many {what}; retry in {wait} s"}, status_code=429,
+                                        headers={"Retry-After": str(wait), "X-Request-Id": rid})
+            limits.api.hit(ip)
+            if request.method == "POST" and path.endswith(CLOUD_CHECK_SUFFIXES):
+                limits.cloud_checks.hit(ip)
         response = await call_next(request)
+        if response.status_code == 401 and request.headers.get("authorization"):  # a token was tried and rejected
+            limits.auth_failures.hit(ip)
         ms = round(1000 * (time.perf_counter() - t0), 1)
         response.headers["X-Request-Id"] = rid
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        if not path.startswith(("/docs", "/redoc")):  # Swagger UI needs its CDN and inline script
+            response.headers["Content-Security-Policy"] = CSP
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
             log.info("request", extra={"request_id": rid, "path": request.url.path, "status": response.status_code, "duration_ms": ms})
@@ -84,7 +118,15 @@ def create_app(db: Database | None = None, start_scheduler: bool | None = None) 
 
         @app.get("/", include_in_schema=False)
         def index():
-            return FileResponse(STATIC / "index.html")
+            token = get_settings().google_site_verification
+            if not token:
+                return FileResponse(STATIC / "index.html")
+            if not SITE_VERIFICATION.fullmatch(token):
+                log.warning("ignoring CLOUDARC_GOOGLE_SITE_VERIFICATION: unexpected characters")
+                return FileResponse(STATIC / "index.html")
+            html = (STATIC / "index.html").read_text(encoding="utf-8")
+            meta = f'<meta name="google-site-verification" content="{token}">'
+            return HTMLResponse(html.replace("<head>", f"<head>\n  {meta}", 1))
 
     return app
 

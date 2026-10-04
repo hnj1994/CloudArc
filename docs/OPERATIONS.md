@@ -43,7 +43,26 @@ The script creates the app registration, redirect URIs and scope, pre-authorizes
 4. Set `CLOUDARC_AUTH_MODE=entra`, `CLOUDARC_ENTRA_TENANT_ID` and `CLOUDARC_ENTRA_CLIENT_ID`, then restart.
 5. Users must be pre-provisioned under Administration (by e-mail/UPN) and assigned to clients. Sign-in alone grants nothing.
 
-API tokens (`cloudarc create-user … --token`, or Administration › Issue API token) remain available for automation and read-only integrations.
+API tokens (`cloudarc create-user … --token`, or Administration › Issue API token) remain available for automation and read-only integrations. When SSO is on, the sign-in page shows only **Sign in with Microsoft**; token sign-in is behind **Use an API token instead**.
+
+### Custom domain and browser warnings
+
+Shared `*.azurewebsites.net` addresses are often used for phishing pages. A new sign-in page on one can be flagged by Google Safe Browsing (Chrome's red "Dangerous site" warning). Run the console on your own subdomain:
+
+```powershell
+.\deploy\azure\add-custom-domain.ps1 -App cloudarc-console -Domain cloudarc.yourcompany.com
+```
+
+The first run prints a CNAME and an `asuid` TXT record to create at your DNS provider. Run it again once they resolve. It then binds the domain, issues a free managed certificate, enforces HTTPS, and adds the SSO redirect URIs. `add-custom-domain.sh` is the bash equivalent.
+
+To clear an existing Safe Browsing flag, prove ownership in [Google Search Console](https://search.google.com/search-console):
+1. Add a **URL prefix** property for the console address.
+2. Choose **HTML tag** as the verification method and copy only the `content` value.
+3. Set it as `CLOUDARC_GOOGLE_SITE_VERIFICATION` on the web app; the console serves the tag on `/`.
+4. Select **Verify**.
+5. Under **Security & manual actions › Security issues**, select **Request review**.
+
+Do steps 1–4 for each address you use: the custom domain and the `azurewebsites.net` address are separate properties.
 
 ## 2. Onboard a client subscription
 
@@ -73,6 +92,26 @@ Under **Alerts › Notification channels** (tenant admin), add a Teams incoming-
 Budgets, forecast and anomaly alerts are evaluated after every sync or upload and de-duplicated per period and threshold.
 
 ## 4. Backup & restore (RPO 24 h, RTO 4 h)
+
+### Azure App Service
+
+`deploy/azure/setup-backups.sh` sets up nightly backups to a private Blob container:
+- The web app authenticates with its managed identity; the storage account has no keys enabled.
+- Backups older than 30 days are deleted automatically, and deleted backups stay recoverable for 7 days.
+- Each backup is a consistent Parquet export with a manifest of row counts, named `cloudarc-<UTC timestamp>.tar.gz`. It runs daily at 04:00 UTC, after the 02:00 sync.
+- `GET /api/health` reports the last backup's status and time. A failed backup is recorded there and in the audit log, and is retried the next night.
+
+Run these from the web app's SSH console (**Portal › App Service › SSH**, or `https://<app>.scm.azurewebsites.net/webssh/host`):
+
+```bash
+python -m cloudarc.cli backup --upload        # back up now
+python -m cloudarc.cli backups                # list backups
+python -m cloudarc.cli restore --from-blob latest   # or a name from the list
+```
+
+`restore --from-blob` downloads the backup into a separate file next to the database and checks every table's row count against the backup's manifest. It does not touch the running database. **Restart the app** (Portal › Restart, or `az webapp restart`) to switch over. The previous database is kept as `cloudarc.duckdb.pre-restore-<timestamp>`; to roll back, stop the app, move it back and start again. The encryption key (`CLOUDARC_MASTER_KEY`) must be the same one that was in use when the backup was taken, or stored cloud credentials cannot be decrypted. Keep a copy of it outside Azure.
+
+### Docker host
 
 ```bash
 # daily, e.g. cron: 30 1 * * * /opt/cloudarc/deploy/backup.sh

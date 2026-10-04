@@ -86,9 +86,9 @@ def multi_month_forecast(history: list[tuple[date, float]], horizon: int) -> lis
         xs = list(range(n))
         mx, my = statistics.fmean(xs), statistics.fmean(ys)
         sxx = sum((x - mx) ** 2 for x in xs)
-        slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+        slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=True)) / sxx
         intercept = my - slope * mx
-        residuals = [y - (intercept + slope * x) for x, y in zip(xs, ys)]
+        residuals = [y - (intercept + slope * x) for x, y in zip(xs, ys, strict=True)]
         resid = statistics.pstdev(residuals)
     out = []
     for h in range(1, horizon + 1):

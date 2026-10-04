@@ -18,29 +18,58 @@ concurrency: deploy-azure
 
 jobs:
   deploy:
-    if: vars.AZURE_WEBAPP_NAME != ''
     runs-on: ubuntu-latest
     steps:
+      # Report which settings are missing instead of silently skipping the job (values are never printed).
+      - name: Check configuration
+        id: cfg
+        env:
+          APP: ${{ vars.AZURE_WEBAPP_NAME }}
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          CLIENT: ${{ secrets.AZURE_CLIENT_ID }}
+          TENANT: ${{ secrets.AZURE_TENANT_ID }}
+          SUB: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          missing=""
+          [ -n "$APP" ]    || missing="$missing vars.AZURE_WEBAPP_NAME"
+          [ -n "$RG" ]     || missing="$missing vars.AZURE_RESOURCE_GROUP"
+          [ -n "$CLIENT" ] || missing="$missing secrets.AZURE_CLIENT_ID"
+          [ -n "$TENANT" ] || missing="$missing secrets.AZURE_TENANT_ID"
+          [ -n "$SUB" ]    || missing="$missing secrets.AZURE_SUBSCRIPTION_ID"
+          if [ -n "$missing" ]; then
+            echo "::warning title=Azure deploy not configured::Missing:$missing — see deploy/azure/setup-github-deploy.ps1"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "All Azure deploy settings present (web app: $APP, resource group: $RG)"
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ready == 'true'
       - uses: actions/setup-python@v5
+        if: steps.cfg.outputs.ready == 'true'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: requirements.lock.txt
       - name: Tests must pass before deploying
+        if: steps.cfg.outputs.ready == 'true'
         run: pip install -r requirements.lock.txt && pip install -e ".[dev]" && python -m pytest -q
       - name: Package source for the App Service (Oryx) build
+        if: steps.cfg.outputs.ready == 'true'
         run: git archive --format=zip -o cloudarc.zip HEAD cloudarc pyproject.toml README.md requirements.txt
       - uses: azure/login@v2
+        if: steps.cfg.outputs.ready == 'true'
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Deploy
+        if: steps.cfg.outputs.ready == 'true'
         run: |
           az webapp deploy -n "${{ vars.AZURE_WEBAPP_NAME }}" -g "${{ vars.AZURE_RESOURCE_GROUP }}" \
             --src-path cloudarc.zip --type zip --async false
       - name: Health check
+        if: steps.cfg.outputs.ready == 'true'
         run: |
           host=$(az webapp show -n "${{ vars.AZURE_WEBAPP_NAME }}" -g "${{ vars.AZURE_RESOURCE_GROUP }}" --query defaultHostName -o tsv)
           for i in $(seq 1 40); do curl -fsS "https://$host/api/health" && exit 0; sleep 15; done
