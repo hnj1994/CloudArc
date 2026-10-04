@@ -303,8 +303,14 @@ CREATE TABLE IF NOT EXISTS report_runs (
     created_at TIMESTAMP NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS system_state (
+    key VARCHAR PRIMARY KEY,
+    value JSON,
+    updated_at TIMESTAMP NOT NULL DEFAULT now()
+);
+
 -- Additive migrations for databases created by earlier versions.
--- Non-secret connector settings (AWS CUR bucket/prefix, external ID; GCP export table). Secrets stay in credentials.
+-- Non-secret connector settings (AWS CUR bucket/prefix and external ID, GCP export table). Secrets stay in credentials.
 ALTER TABLE cloud_accounts ADD COLUMN IF NOT EXISTS config JSON;
 """
 
@@ -394,6 +400,10 @@ def _connect(path: str) -> duckdb.DuckDBPyConnection:
     when the file is the main database ("no default database set"). Replaying it while the file is
     attached to an in-memory database works; checkpointing there folds the WAL into the file.
     """
+    if path != ":memory:":
+        from .backup import apply_pending_restore  # a restore staged by `cloudarc restore --from-blob`
+
+        apply_pending_restore(path)
     try:
         return duckdb.connect(path)
     except duckdb.InternalException as exc:

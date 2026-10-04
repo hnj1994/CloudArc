@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from . import alerts, audit, budgets
@@ -367,6 +367,25 @@ def apply_retention(db: Database, months: int | None = None) -> None:
     db.execute("DELETE FROM resource_metrics WHERE day < ?", [cutoff])
 
 
+def nightly_backup(db: Database, container=None) -> dict:
+    """Back up to Blob storage; the outcome is kept in system_state and shown by /api/health."""
+    from . import backup
+
+    try:
+        res = backup.run_backup(db, container or backup.BlobContainer(get_settings().backup_url))
+        backup.record(db, "backup", {"status": "succeeded", **res})
+        audit.record(db, "backup.succeeded", detail=res)
+        return res
+    except Exception as exc:  # noqa: BLE001 - reported, retried tomorrow; never stops the scheduler
+        err = f"{type(exc).__name__}: {str(exc)[:300]}"
+        last = backup.state(db, "backup") or {}
+        backup.record(db, "backup", {**last, "status": "failed", "error": err,
+                                     "failed_at": datetime.now(UTC).isoformat(timespec="seconds")})
+        audit.record(db, "backup.failed", detail={"error": err})
+        log.error("backup failed: %s", err)
+        return {"error": err}
+
+
 class Scheduler(threading.Thread):
     """Daily sync at CLOUDARC_SYNC_HOUR_UTC plus on-demand jobs, polled every ``interval`` seconds."""
 
@@ -375,6 +394,7 @@ class Scheduler(threading.Thread):
         self.db, self.interval = db, interval
         self._stop = threading.Event()
         self._last_daily: date | None = None
+        self._last_backup: date | None = None
 
     def stop(self) -> None:
         self._stop.set()
@@ -389,6 +409,9 @@ class Scheduler(threading.Thread):
                     enqueue_daily(self.db)
                     apply_retention(self.db)
                 run_due_jobs(self.db)
+                if get_settings().backup_url and now.hour == get_settings().backup_hour_utc and self._last_backup != now.date():
+                    self._last_backup = now.date()
+                    nightly_backup(self.db)
             except Exception:  # noqa: BLE001
                 log.exception("scheduler iteration failed")
             self._stop.wait(self.interval)

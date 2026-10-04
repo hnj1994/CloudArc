@@ -93,6 +93,26 @@ Budgets, forecast and anomaly alerts are evaluated after every sync or upload an
 
 ## 4. Backup & restore (RPO 24 h, RTO 4 h)
 
+### Azure App Service
+
+`deploy/azure/setup-backups.sh` sets up nightly backups to a private Blob container:
+- The web app authenticates with its managed identity; the storage account has no keys enabled.
+- Backups older than 30 days are deleted automatically, and deleted backups stay recoverable for 7 days.
+- Each backup is a consistent Parquet export with a manifest of row counts, named `cloudarc-<UTC timestamp>.tar.gz`. It runs daily at 04:00 UTC, after the 02:00 sync.
+- `GET /api/health` reports the last backup's status and time. A failed backup is recorded there and in the audit log, and is retried the next night.
+
+Run these from the web app's SSH console (**Portal › App Service › SSH**, or `https://<app>.scm.azurewebsites.net/webssh/host`):
+
+```bash
+python -m cloudarc.cli backup --upload        # back up now
+python -m cloudarc.cli backups                # list backups
+python -m cloudarc.cli restore --from-blob latest   # or a name from the list
+```
+
+`restore --from-blob` downloads the backup into a separate file next to the database and checks every table's row count against the backup's manifest. It does not touch the running database. **Restart the app** (Portal › Restart, or `az webapp restart`) to switch over. The previous database is kept as `cloudarc.duckdb.pre-restore-<timestamp>`; to roll back, stop the app, move it back and start again. The encryption key (`CLOUDARC_MASTER_KEY`) must be the same one that was in use when the backup was taken, or stored cloud credentials cannot be decrypted. Keep a copy of it outside Azure.
+
+### Docker host
+
 ```bash
 # daily, e.g. cron: 30 1 * * * /opt/cloudarc/deploy/backup.sh
 ./deploy/backup.sh                       # Parquet snapshot in the data volume, 14 days kept

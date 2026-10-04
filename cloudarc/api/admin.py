@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .. import __version__, audit, sync, tenants
+from ..backup import state as backup_state
 from ..config import get_settings
 from ..connectors.aws import AwsError
 from ..connectors.azure import AzureClient, AzureError
@@ -45,7 +46,11 @@ def health(db: Database = Depends(db_dep)):
     counts = {r["s"] or "never": r["n"] for r in db.query(
         "SELECT last_sync_status AS s, count(*) AS n FROM cloud_accounts WHERE enabled GROUP BY 1")}
     failed_jobs = db.scalar("SELECT count(*) FROM sync_jobs WHERE status = 'failed' AND created_at > now() - INTERVAL 1 DAY")
-    return {"status": "ok", "version": __version__, "accounts_by_sync_status": counts, "failed_sync_jobs_24h": failed_jobs}
+    out = {"status": "ok", "version": __version__, "accounts_by_sync_status": counts, "failed_sync_jobs_24h": failed_jobs}
+    if get_settings().backup_url:
+        b = backup_state(db, "backup") or {}
+        out["backup"] = {"status": b.get("status", "never"), "last_success": b.get("at"), "name": b.get("name")}
+    return out
 
 
 @router.get("/config")

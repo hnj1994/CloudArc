@@ -90,8 +90,16 @@ def cmd_report(a):
 
 
 def cmd_backup(a):
-    """Consistent snapshot as Parquet (NFR-09). Restore with `cloudarc restore <dir>` into an empty database."""
+    """Consistent snapshot as Parquet (NFR-09). Restore with `cloudarc restore <dir>` into an empty database.
+
+    With --upload, sends a tar.gz snapshot to CLOUDARC_BACKUP_URL instead (the nightly job does the same)."""
     db = _db()
+    if a.upload:
+        from .sync import nightly_backup
+
+        res = nightly_backup(db)
+        print(json.dumps(res, indent=2))
+        sys.exit(1 if "error" in res else 0)
     target = Path(a.dir) / date.today().isoformat()
     target.parent.mkdir(parents=True, exist_ok=True)
     db.execute("CHECKPOINT")
@@ -99,7 +107,37 @@ def cmd_backup(a):
     print(target)
 
 
+def cmd_backups(a):
+    from .backup import BlobContainer
+    from .config import get_settings
+
+    url = get_settings().backup_url or sys.exit("CLOUDARC_BACKUP_URL is not set")
+    for b in BlobContainer(url).list():
+        print(f"{b['name']}  {b['size']:>12,} bytes  {b['last_modified']}")
+
+
 def cmd_restore(a):
+    if a.from_blob:
+        import tempfile
+
+        from .backup import BlobContainer, stage_restore
+        from .config import get_settings
+
+        s = get_settings()
+        container = BlobContainer(s.backup_url or sys.exit("CLOUDARC_BACKUP_URL is not set"))
+        name = a.from_blob
+        if name == "latest":
+            names = [b["name"] for b in container.list()]
+            name = names[-1] if names else sys.exit("no backups found")
+        with tempfile.TemporaryDirectory(prefix="cloudarc-restore-") as tmp:
+            archive = Path(tmp) / name
+            container.download(name, archive)
+            res = stage_restore(archive, s.db_path)
+        print(json.dumps({"backup": name, **res}, indent=2))
+        print("Staged. Restart the app to switch to it; the current database is kept as <db>.pre-restore-<timestamp>.")
+        return
+    if not a.dir:
+        sys.exit("give a backup directory, or --from-blob NAME|latest")
     db = _db()
     if db.scalar("SELECT count(*) FROM tenants"):
         sys.exit("refusing to restore into a non-empty database; point CLOUDARC_DB_PATH at a new file")
@@ -161,12 +199,17 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--out")
     s.set_defaults(fn=cmd_report)
 
-    s = sub.add_parser("backup")
+    s = sub.add_parser("backup", help="local Parquet snapshot, or --upload to Blob storage")
     s.add_argument("--dir", default="backups")
+    s.add_argument("--upload", action="store_true", help="upload a snapshot to CLOUDARC_BACKUP_URL")
     s.set_defaults(fn=cmd_backup)
 
-    s = sub.add_parser("restore")
-    s.add_argument("dir")
+    s = sub.add_parser("backups", help="list backups in CLOUDARC_BACKUP_URL")
+    s.set_defaults(fn=cmd_backups)
+
+    s = sub.add_parser("restore", help="import a local snapshot into an empty database, or stage a Blob backup")
+    s.add_argument("dir", nargs="?")
+    s.add_argument("--from-blob", metavar="NAME|latest", help="download, verify and stage a backup; applied on next start")
     s.set_defaults(fn=cmd_restore)
 
     a = p.parse_args(argv)

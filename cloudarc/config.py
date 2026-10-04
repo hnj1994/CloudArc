@@ -39,6 +39,8 @@ class Settings:
     llm_data_policy_approved: bool = False
     ri_discount_1y: float = 0.35
     ri_discount_3y: float = 0.55
+    backup_url: str | None = None  # https://<account>.blob.core.windows.net/<container>; nightly backups when set
+    backup_hour_utc: int = 4
 
     @property
     def reports_dir(self) -> Path:
@@ -83,4 +85,6 @@ def get_settings() -> Settings:
         llm_data_policy_approved=_bool(_env("LLM_DATA_POLICY_APPROVED")),
         ri_discount_1y=float(_env("RI_DISCOUNT_1Y", "0.35")),
         ri_discount_3y=float(_env("RI_DISCOUNT_3Y", "0.55")),
+        backup_url=_env("BACKUP_URL"),
+        backup_hour_utc=int(_env("BACKUP_HOUR_UTC", "4")),
     )
